@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 
-from src.logging_utils import configure_logging
+from src.logging_utils import configure_logging, format_table_for_log
 from src.schemas import ExperimentConfig
 
 POSTERIOR_METADATA_KEYS = {
@@ -79,7 +79,13 @@ def _compute_standard_rhat(flattened: np.ndarray) -> np.ndarray:
     between = draws * ((chain_means - overall_mean) ** 2).sum(axis=0) / (chains - 1)
     within = flattened.var(axis=1, ddof=1).mean(axis=0)
     variance_estimate = ((draws - 1) / draws) * within + between / draws
-    return np.sqrt(variance_estimate / within)
+    ratio = np.divide(
+        variance_estimate,
+        within,
+        out=np.full(features, np.nan, dtype=float),
+        where=within != 0,
+    )
+    return np.sqrt(ratio)
 
 
 def compute_rhat(samples: np.ndarray) -> np.ndarray:
@@ -197,11 +203,10 @@ def plot_rank_histogram(samples: np.ndarray, labels: np.ndarray, title: str) -> 
 
 
 def save_figure(fig: plt.Figure, output_base: Path) -> None:
-    """Save a matplotlib figure as PNG and PDF."""
+    """Save a matplotlib figure as PNG."""
 
     output_base.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_base.with_suffix(".png"), dpi=300, bbox_inches="tight")
-    fig.savefig(output_base.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
@@ -229,10 +234,11 @@ def main() -> None:
             chain_count,
         )
     summary = summarize_diagnostics(posterior)
-    logger.info("diagnostic summary\n%s", summary)
+    if logger.isEnabledFor(logging.INFO):
+        logger.info("diagnostic summary\n%s", format_table_for_log(summary))
     judge_ids = posterior["judge_ids"]
     item_ids = posterior["item_ids"]
-    trace_dir = Path("figures") / "diagnostics"
+    trace_dir = config.figures_dir / "diagnostics"
     save_figure(
         plot_trace(posterior["theta"], judge_ids, "Judge Reliability Trace"),
         trace_dir / "theta_trace",

@@ -17,7 +17,7 @@ import polars as pl
 from numpyro.infer import MCMC, NUTS
 
 from src.data.loader import ITEM_METADATA_COLUMNS
-from src.logging_utils import configure_logging
+from src.logging_utils import configure_logging, format_table_for_log
 from src.schemas import ExperimentConfig, IRTConfig
 
 logger = logging.getLogger(__name__)
@@ -239,6 +239,34 @@ def summarize_judges(samples: dict[str, np.ndarray], judge_ids: np.ndarray) -> p
     ).sort("theta_mean", descending=True)
 
 
+def summarize_item_parameters(samples: dict[str, np.ndarray]) -> pl.DataFrame:
+    """Summarize posterior item parameter distributions compactly for CLI logs."""
+
+    rows: list[dict[str, float | str]] = []
+    b_samples = samples["b"].reshape(-1, samples["b"].shape[-1])
+    rows.append(
+        {
+            "parameter": "b",
+            "mean": float(b_samples.mean()),
+            "sd": float(b_samples.std()),
+            "min": float(b_samples.mean(axis=0).min()),
+            "max": float(b_samples.mean(axis=0).max()),
+        }
+    )
+    if "a" in samples:
+        a_samples = samples["a"].reshape(-1, samples["a"].shape[-1])
+        rows.append(
+            {
+                "parameter": "a",
+                "mean": float(a_samples.mean()),
+                "sd": float(a_samples.std()),
+                "min": float(a_samples.mean(axis=0).min()),
+                "max": float(a_samples.mean(axis=0).max()),
+            }
+        )
+    return pl.DataFrame(rows)
+
+
 def main() -> None:
     """CLI entrypoint for NumPyro IRT inference."""
 
@@ -261,8 +289,11 @@ def main() -> None:
         },
     )
     summary = summarize_judges(samples, observations["judge_ids"])
+    item_summary = summarize_item_parameters(samples)
     logger.info("saved_posterior=%s", output_path)
-    logger.info("judge summary\n%s", summary)
+    if logger.isEnabledFor(logging.INFO):
+        logger.info("judge summary\n%s", format_table_for_log(summary))
+        logger.info("item parameter summary\n%s", format_table_for_log(item_summary))
 
 
 if __name__ == "__main__":

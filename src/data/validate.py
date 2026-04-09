@@ -9,7 +9,7 @@ from pathlib import Path
 import polars as pl
 
 from src.data.loader import ITEM_METADATA_COLUMNS, build_and_write_matrix, load_or_prepare_items
-from src.logging_utils import configure_logging
+from src.logging_utils import configure_logging, format_table_for_log
 from src.schemas import ExperimentConfig
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,8 @@ def main() -> None:
     validate_matrix(matrix, [judge.id for judge in config.judges])
     summary = summarize_matrix(matrix)
     logger.info("items_ok")
-    logger.info("validation summary\n%s", summary)
+    if logger.isEnabledFor(logging.INFO):
+        logger.info("validation summary\n%s", format_table_for_log(summary))
 
 
 if __name__ == "__main__":

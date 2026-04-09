@@ -12,7 +12,7 @@ UV_CACHE_DIR ?= .uv-cache
 export UV_PROJECT_ENVIRONMENT := .venv
 export UV_CACHE_DIR
 
-.PHONY: sync lint format dead-code test recommend-models setup-models items items-refresh judge matrix validate infer infer-blackjax diagnostics plots notebook run
+.PHONY: sync lint format dead-code test pre-commit-install pre-commit-run recommend-models setup-models items items-refresh judge matrix validate infer infer-blackjax diagnostics plots notebook run
 
 define log_path
 $(LOG_DIR)/$(1)_$(shell date +'%Y%m%d_%H%M%S').log
@@ -29,7 +29,7 @@ sync:
 	@$(UV) sync
 
 lint:
-	@$(UV) run ruff check src notebooks
+	@$(UV) run ruff check src notebooks --fix
 
 format:
 	@$(UV) run ruff format src notebooks
@@ -39,6 +39,12 @@ dead-code:
 
 test:
 	@MPLCONFIGDIR=.uv-cache/matplotlib $(UV) run python -m unittest discover -s tests
+
+pre-commit-install:
+	@$(UV) run pre-commit install --hook-type pre-commit --hook-type pre-push
+
+pre-commit-run:
+	@MPLCONFIGDIR=.uv-cache/matplotlib $(UV) run pre-commit run --all-files
 
 recommend-models:
 	@$(call run_and_log,recommend_models,bash scripts/recommend_models.sh)

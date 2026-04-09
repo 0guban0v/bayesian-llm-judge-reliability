@@ -7,4 +7,3 @@ This directory stores JudgeBench source snapshots, append-only judge logs, proce
 - `processed/`: parquet matrices and posterior `.npz` outputs
 
 JudgeBench is loaded from Hugging Face (`ScalerLab/JudgeBench`) under its published license. Keep large raw exports out of git when possible.
-

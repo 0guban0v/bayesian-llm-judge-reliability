@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
-from src.models.irt_numpyro import load_matrix_observations
+from src.models.irt_numpyro import load_matrix_observations, summarize_item_parameters
 
 
 class LoadMatrixObservationsTests(unittest.TestCase):
@@ -45,6 +45,27 @@ class LoadMatrixObservationsTests(unittest.TestCase):
         )
         self.assertEqual(observations["n_judges"], 2)
         self.assertEqual(observations["n_items"], 3)
+
+
+class SummarizeItemParametersTests(unittest.TestCase):
+    """Verify compact item-parameter summaries for CLI output."""
+
+    def test_summarize_item_parameters_includes_b_and_a_for_2pl(self) -> None:
+        samples = {
+            "b": np.asarray([[[0.0, 1.0], [1.0, 2.0]]]),
+            "a": np.asarray([[[1.0, 2.0], [2.0, 3.0]]]),
+        }
+
+        summary = summarize_item_parameters(samples)
+
+        self.assertEqual(summary.get_column("parameter").to_list(), ["b", "a"])
+
+    def test_summarize_item_parameters_includes_only_b_for_1pl(self) -> None:
+        samples = {"b": np.asarray([[[0.0, 1.0], [1.0, 2.0]]])}
+
+        summary = summarize_item_parameters(samples)
+
+        self.assertEqual(summary.get_column("parameter").to_list(), ["b"])
 
 
 if __name__ == "__main__":
