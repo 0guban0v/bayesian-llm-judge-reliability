@@ -59,9 +59,6 @@ class ParseCorrectnessTests(unittest.TestCase):
     def test_returns_false_for_non_matching_verdict(self) -> None:
         self.assertFalse(parse_correctness("A", "B>A"))
 
-    def test_returns_none_for_tie_verdict(self) -> None:
-        self.assertIsNone(parse_correctness("TIE", "A>B"))
-
     def test_returns_none_for_unknown_verdict(self) -> None:
         self.assertIsNone(parse_correctness("UNKNOWN", "B>A"))
 

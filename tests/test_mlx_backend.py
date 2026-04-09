@@ -7,6 +7,7 @@ import types
 import unittest
 from unittest.mock import patch
 
+import numpy as np
 from src.judges import mlx_backend
 
 
@@ -91,10 +92,10 @@ class MlxBackendCacheTests(unittest.TestCase):
             return " A\n"
 
         fake_mx_core = types.SimpleNamespace(
-            arange=lambda size: list(range(size)),
-            logical_or=lambda left, right: left or right,
-            where=lambda condition, left, right: left if condition else right,
-            full=lambda shape, value: value,
+            arange=np.arange,
+            logical_or=np.logical_or,
+            where=np.where,
+            full=np.full,
         )
         fake_mlx_lm = types.SimpleNamespace(load=fake_load, generate=fake_generate)
 
@@ -120,6 +121,21 @@ class MlxBackendCacheTests(unittest.TestCase):
         self.assertEqual(generate_kwargs["max_tokens"], 5)
         self.assertFalse(generate_kwargs["verbose"])
         self.assertEqual(len(generate_kwargs["logits_processors"]), 1)
+        processor = generate_kwargs["logits_processors"][0]
+        base_logits = np.arange(100, dtype=float)[None, :]
+        verdict_step = processor([], base_logits.copy())
+        eos_step = processor([], base_logits.copy())
+        allowed_verdict_ids = {11, 12, 21, 22}
+        for token_id in range(base_logits.shape[-1]):
+            if token_id in allowed_verdict_ids:
+                self.assertEqual(verdict_step[0, token_id], base_logits[0, token_id])
+            else:
+                self.assertEqual(verdict_step[0, token_id], float("-inf"))
+        for token_id in range(base_logits.shape[-1]):
+            if token_id == 99:
+                self.assertEqual(eos_step[0, token_id], base_logits[0, token_id])
+            else:
+                self.assertEqual(eos_step[0, token_id], float("-inf"))
         self.assertEqual(
             fake_tokenizer.messages,
             [
