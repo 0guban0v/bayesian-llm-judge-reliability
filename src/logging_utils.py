@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
-import polars as pl
+if TYPE_CHECKING:
+    import polars as pl
 
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 
@@ -19,8 +21,10 @@ def configure_logging(level: int = logging.INFO) -> None:
     logging.basicConfig(level=level, format=LOG_FORMAT)
 
 
-def format_table_for_log(frame: pl.DataFrame) -> str:
+def format_table_for_log(frame: "pl.DataFrame") -> str:
     """Render a Polars DataFrame for logs using Polars' built-in formatter."""
+
+    import polars as pl
 
     if frame.height == 0:
         return "<empty>"
