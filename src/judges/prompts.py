@@ -13,8 +13,11 @@ Response A:
 Response B:
 {response_b}
 
-Evaluate which response better satisfies the user request, is more correct, and is more helpful.
-Return only one final line in exactly this format:
+Do not answer the user question yourself.
+Do not solve the task.
+Do not provide chain-of-thought or any explanation.
+Only compare Response A and Response B.
+Return exactly one final line in exactly this format:
 FINAL VERDICT: A
 or
 FINAL VERDICT: B
@@ -31,8 +34,12 @@ Response A:
 Response B:
 {response_b}
 
-Reason step by step about factual correctness, instruction-following, completeness, and clarity.
-After your reasoning, return one final line in exactly this format:
+Do not answer the user question yourself.
+Do not solve the task.
+Compare Response A and Response B on factual correctness, instruction-following,
+completeness, and clarity.
+Keep the reasoning brief.
+After your reasoning, end with exactly one final line in this format:
 FINAL VERDICT: A
 or
 FINAL VERDICT: B
@@ -50,7 +57,11 @@ Assistant A:
 Assistant B:
 {response_b}
 
-Choose the stronger answer. Output only:
+Do not answer the user prompt yourself.
+Do not solve the task.
+Do not provide chain-of-thought or any explanation.
+Only compare Assistant A and Assistant B.
+Output exactly one final line:
 FINAL VERDICT: A
 or
 FINAL VERDICT: B
@@ -68,8 +79,11 @@ Assistant A:
 Assistant B:
 {response_b}
 
+Do not answer the user prompt yourself.
+Do not solve the task.
 Begin with a short comparison of correctness, helpfulness, relevance, and concision.
-End with one final line in exactly this format:
+Keep the reasoning brief.
+End with exactly one final line in this format:
 FINAL VERDICT: A
 or
 FINAL VERDICT: B

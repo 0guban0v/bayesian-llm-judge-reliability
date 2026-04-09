@@ -17,7 +17,7 @@ import polars as pl
 from numpyro.infer import MCMC, NUTS
 
 from src.data.loader import ITEM_METADATA_COLUMNS
-from src.logging_utils import configure_logging
+from src.logging_utils import configure_logging, format_table_for_log
 from src.schemas import ExperimentConfig, IRTConfig
 
 logger = logging.getLogger(__name__)
@@ -262,7 +262,7 @@ def main() -> None:
     )
     summary = summarize_judges(samples, observations["judge_ids"])
     logger.info("saved_posterior=%s", output_path)
-    logger.info("judge summary\n%s", summary)
+    logger.info("judge summary\n%s", format_table_for_log(summary))
 
 
 if __name__ == "__main__":
