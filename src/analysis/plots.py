@@ -109,12 +109,8 @@ def posterior_predictive_judge_accuracy(
     theta = flatten_draws(posterior["theta"])
     b = flatten_draws(posterior["b"])
     a = flatten_draws(posterior["a"]) if "a" in posterior else np.ones_like(b)
-    max_draws = min(theta.shape[0], 250)
-    theta = theta[:max_draws]
-    b = b[:max_draws]
-    a = a[:max_draws]
     predictive = []
-    for draw_index in range(max_draws):
+    for draw_index in range(theta.shape[0]):
         logits = a[draw_index][None, :] * (theta[draw_index][:, None] - b[draw_index][None, :])
         probabilities = 1.0 / (1.0 + np.exp(-logits))
         predictive.append(probabilities.mean(axis=1))
@@ -162,21 +158,22 @@ def main() -> None:
     posterior_path = config.inference.posterior_path
     posterior = load_posterior(posterior_path)
     matrix = pl.read_parquet(config.data.matrix_path)
-    figures_dir = Path("figures")
+    figures_dir = config.figures_dir
     logger.info(
         "loaded posterior from %s using backend=%s",
         posterior_path,
         config.inference.backend,
     )
-    save_figure(plot_judge_reliability_ridge(posterior), figures_dir / "judge_reliability_ridge")
+    ridge_figure = plot_judge_reliability_ridge(posterior)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    ridge_figure.savefig(figures_dir / "judge_reliability_ridge.png", dpi=300, bbox_inches="tight")
+    ridge_figure.savefig(figures_dir / "hero.png", dpi=300, bbox_inches="tight")
+    plt.close(ridge_figure)
     save_figure(plot_item_parameter_scatter(posterior), figures_dir / "item_parameter_scatter")
     save_figure(
         plot_posterior_predictive_check(matrix, posterior),
         figures_dir / "posterior_predictive",
     )
-    hero_figure = plot_judge_reliability_ridge(posterior)
-    hero_figure.savefig(figures_dir / "hero.png", dpi=300, bbox_inches="tight")
-    plt.close(hero_figure)
     logger.info("saved posterior figures to %s", figures_dir)
 
 

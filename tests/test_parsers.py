@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.judges.parsers import parse_verdict, swap_verdict
+from src.judges.parsers import parse_correctness, parse_verdict, swap_verdict
 
 
 class ParseVerdictTests(unittest.TestCase):
@@ -37,8 +37,37 @@ class ParseVerdictTests(unittest.TestCase):
     def test_parses_terminal_tie_marker(self) -> None:
         self.assertEqual(parse_verdict("Comparison complete.\n[[A=B]]"), "TIE")
 
+    def test_does_not_parse_suffix_word_as_tie(self) -> None:
+        self.assertEqual(parse_verdict("Comparison complete.\nNECKTIE"), "UNKNOWN")
+
     def test_swap_verdict_still_maps_reversed_order(self) -> None:
         self.assertEqual(swap_verdict(parse_verdict("FINAL VERDICT: A")), "B")
+
+
+class ParseCorrectnessTests(unittest.TestCase):
+    """Verify verdict-to-label correctness conversion for matrix construction."""
+
+    def test_returns_true_for_matching_a_verdict(self) -> None:
+        self.assertTrue(parse_correctness("A", "A>B"))
+
+    def test_returns_true_for_matching_b_verdict(self) -> None:
+        self.assertTrue(parse_correctness("B", "B>A"))
+
+    def test_returns_false_for_non_matching_verdict(self) -> None:
+        self.assertFalse(parse_correctness("A", "B>A"))
+
+    def test_returns_none_for_tie_verdict(self) -> None:
+        self.assertIsNone(parse_correctness("TIE", "A>B"))
+
+    def test_returns_none_for_unknown_verdict(self) -> None:
+        self.assertIsNone(parse_correctness("UNKNOWN", "B>A"))
+
+    def test_normalizes_lowercase_label_before_comparison(self) -> None:
+        self.assertTrue(parse_correctness("A", "a>b"))
+
+    def test_raises_for_unsupported_label(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported label: invalid"):
+            parse_correctness("A", "invalid")
 
 
 if __name__ == "__main__":

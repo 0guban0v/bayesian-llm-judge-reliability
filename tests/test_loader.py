@@ -5,7 +5,8 @@ from __future__ import annotations
 import unittest
 
 import polars as pl
-from src.data.loader import build_binary_matrix
+from src.data.loader import _matches_categories, build_binary_matrix
+from src.data.validate import validate_items
 
 
 class BuildBinaryMatrixTests(unittest.TestCase):
@@ -36,6 +37,76 @@ class BuildBinaryMatrixTests(unittest.TestCase):
 
         self.assertIn("duplicate original-order judgments detected", captured.output[0])
         self.assertEqual(matrix["judge-a"].to_list(), [1])
+
+
+class CategoryMatcherTests(unittest.TestCase):
+    """Verify category matching uses token sequences rather than substrings."""
+
+    def test_matches_single_token_category(self) -> None:
+        self.assertTrue(_matches_categories("livebench-math", ["math"]))
+
+    def test_matches_multiword_category(self) -> None:
+        self.assertTrue(_matches_categories("mmlu-pro-computer science", ["computer science"]))
+
+    def test_does_not_match_substring_inside_larger_word(self) -> None:
+        self.assertFalse(_matches_categories("bioinformatics", ["math"]))
+
+    def test_does_not_match_related_but_different_phrase(self) -> None:
+        self.assertFalse(_matches_categories("computational mathematics", ["math"]))
+
+
+class ValidateItemsTests(unittest.TestCase):
+    """Verify JudgeBench item validation catches malformed subsets."""
+
+    def test_accepts_valid_items(self) -> None:
+        items = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2"],
+                "original_id": [1, 2],
+                "split": ["gpt", "claude"],
+                "source": ["source-a", "source-b"],
+                "question": ["question-a", "question-b"],
+                "label": ["A>B", "B>A"],
+            }
+        )
+
+        validate_items(items)
+
+    def test_rejects_duplicate_item_ids(self) -> None:
+        items = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-1"],
+                "original_id": [1, 2],
+                "split": ["gpt", "claude"],
+                "source": ["source-a", "source-b"],
+                "question": ["question-a", "question-b"],
+                "label": ["A>B", "B>A"],
+            }
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Sampled JudgeBench items contain duplicate item IDs.",
+        ):
+            validate_items(items)
+
+    def test_rejects_invalid_labels(self) -> None:
+        items = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2"],
+                "original_id": [1, 2],
+                "split": ["gpt", "claude"],
+                "source": ["source-a", "source-b"],
+                "question": ["question-a", "question-b"],
+                "label": ["A>B", "TIE"],
+            }
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Sampled JudgeBench items contain unsupported labels.",
+        ):
+            validate_items(items)
 
 
 if __name__ == "__main__":

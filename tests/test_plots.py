@@ -31,6 +31,20 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         np.testing.assert_allclose(lower, predicted_mean)
         np.testing.assert_allclose(upper, predicted_mean)
 
+    def test_uses_all_available_draws_for_predictive_intervals(self) -> None:
+        early_draws = np.full((240, 1), -4.0)
+        late_draws = np.full((20, 1), 4.0)
+        posterior = {
+            "theta": np.asarray([np.vstack([early_draws, late_draws])]),
+            "b": np.asarray([np.zeros((260, 1))]),
+            "a": np.asarray([np.ones((260, 1))]),
+        }
+
+        predicted_mean, _, upper = posterior_predictive_judge_accuracy(posterior)
+
+        self.assertGreater(predicted_mean[0], 0.09)
+        self.assertGreater(upper[0], 0.9)
+
     def test_validate_posterior_judge_order_accepts_matching_order(self) -> None:
         matrix_judge_ids = np.asarray(["judge-a", "judge-b"])
         posterior = {"judge_ids": np.asarray(["judge-a", "judge-b"])}
