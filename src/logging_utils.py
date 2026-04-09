@@ -21,7 +21,7 @@ def configure_logging(level: int = logging.INFO) -> None:
     logging.basicConfig(level=level, format=LOG_FORMAT)
 
 
-def format_table_for_log(frame: "pl.DataFrame") -> str:
+def format_table_for_log(frame: pl.DataFrame) -> str:
     """Render a Polars DataFrame for logs using Polars' built-in formatter."""
 
     import polars as pl
