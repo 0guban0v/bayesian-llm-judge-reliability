@@ -2,24 +2,61 @@
 
 from __future__ import annotations
 
-import re
+from enum import StrEnum
 from typing import Literal, cast
 
-Verdict = Literal["A", "B", "TIE", "UNKNOWN"]
-_TERMINAL_VERDICT_PATTERNS = (
-    re.compile(r"FINAL\s+VERDICT\s*:\s*([AB])\s*$", re.IGNORECASE),
-    re.compile(r"VERDICT\s*:\s*([AB])\s*$", re.IGNORECASE),
-    re.compile(r"WINNER\s*:\s*([AB])\s*$", re.IGNORECASE),
-    re.compile(r"OUTPUT\s*\((a|b)\)\s*$", re.IGNORECASE),
-)
-_TERMINAL_TIE_PATTERNS = (
-    re.compile(r"\[\[A=B\]\]\s*$", re.IGNORECASE),
-    re.compile(r"FINAL\s+VERDICT\s*:\s*TIE\s*$", re.IGNORECASE),
-    re.compile(r"VERDICT\s*:\s*TIE\s*$", re.IGNORECASE),
-    re.compile(r"\bTIE\s*$", re.IGNORECASE),
-    re.compile(r"\bNEITHER\s*$", re.IGNORECASE),
-)
-_TERMINAL_LINE_COUNT = 5
+from pydantic import BaseModel, ValidationError, model_validator
+
+ParsedVerdict = Literal["A", "B", "TIE", "UNKNOWN"]
+
+
+class Verdict(StrEnum):
+    """Strict judge verdict labels accepted from model output."""
+
+    A = "A"
+    B = "B"
+
+
+class JudgeInput(BaseModel):
+    """Structured prompt payload for a single judge invocation."""
+
+    question: str
+    response_a: str
+    response_b: str
+
+    def to_prompt(self, template: str) -> str:
+        """Render a prompt template with normalized string fields."""
+
+        return template.format(
+            question=self.question.strip(),
+            response_a=self.response_a.strip(),
+            response_b=self.response_b.strip(),
+        )
+
+
+class JudgeOutput(BaseModel):
+    """Strict first-line parser for judge model output."""
+
+    raw: str
+    verdict: Verdict
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_verdict(cls, values: dict[str, object]) -> dict[str, object]:
+        """Extract a verdict from the first non-empty output line."""
+
+        raw = str(values.get("raw", ""))
+        lines = [line.strip() for line in raw.splitlines() if line.strip()]
+        if not lines:
+            raise ValueError("Parse failure: empty output")
+        first_line = lines[0]
+        if first_line == "FINAL VERDICT: A":
+            values["verdict"] = Verdict.A
+            return values
+        if first_line == "FINAL VERDICT: B":
+            values["verdict"] = Verdict.B
+            return values
+        raise ValueError(f"Parse failure — raw output: {raw!r}")
 
 
 def normalize_label(label: str) -> Literal["A>B", "B>A"]:
@@ -31,46 +68,17 @@ def normalize_label(label: str) -> Literal["A>B", "B>A"]:
     return cast(Literal["A>B", "B>A"], normalized)
 
 
-def _terminal_window(raw_text: str, max_lines: int = _TERMINAL_LINE_COUNT) -> str:
-    """Return the trailing non-empty lines most likely to contain the final verdict."""
+def parse_verdict(raw_text: str) -> ParsedVerdict:
+    """Parse a judge response using a strict first-line verdict contract."""
 
-    lines = [line.strip() for line in raw_text.strip().splitlines() if line.strip()]
-    if not lines:
-        return ""
-    return "\n".join(lines[-max_lines:])
-
-
-def _terminal_line(raw_text: str) -> str:
-    """Return the final non-empty line from a raw response."""
-
-    lines = [line.strip() for line in raw_text.strip().splitlines() if line.strip()]
-    if not lines:
-        return ""
-    return lines[-1]
-
-
-def parse_verdict(raw_text: str) -> Verdict:
-    """Parse a judge response into a canonical verdict."""
-
-    if not raw_text.strip():
+    try:
+        output = JudgeOutput.model_validate({"raw": raw_text})
+    except ValidationError:
         return "UNKNOWN"
-    terminal_text = _terminal_window(raw_text)
-    terminal_line = _terminal_line(raw_text).upper()
-    for pattern in _TERMINAL_TIE_PATTERNS:
-        if pattern.search(terminal_text):
-            return "TIE"
-    for pattern in _TERMINAL_VERDICT_PATTERNS:
-        match = pattern.search(terminal_text)
-        if match is not None:
-            verdict = match.group(1).upper()
-            assert verdict in {"A", "B"}
-            return cast(Verdict, verdict)
-    if terminal_line in {"A", "B"}:
-        return cast(Verdict, terminal_line)
-    return "UNKNOWN"
+    return cast(ParsedVerdict, output.verdict.value)
 
 
-def swap_verdict(verdict: Verdict) -> Verdict:
+def swap_verdict(verdict: ParsedVerdict) -> ParsedVerdict:
     """Map a verdict from reversed prompt order back to original order."""
 
     if verdict == "A":
@@ -80,7 +88,7 @@ def swap_verdict(verdict: Verdict) -> Verdict:
     return verdict
 
 
-def parse_correctness(verdict: Verdict, label: str) -> bool | None:
+def parse_correctness(verdict: ParsedVerdict, label: str) -> bool | None:
     """Convert a verdict into correctness against the ground-truth label."""
 
     canonical_label = normalize_label(label)
