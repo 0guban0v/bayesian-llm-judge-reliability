@@ -203,7 +203,7 @@ class JudgeResult(BaseModel):
     prompt_variant: str
     prompt_order: Literal["original", "reversed"]
     raw_response: str
-    parsed_verdict: Literal["A", "B", "TIE", "UNKNOWN"] | None
+    parsed_verdict: Literal["A", "B"] | None
     correct: bool | None
     latency_ms: int = Field(ge=0)
 
