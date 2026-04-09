@@ -12,7 +12,7 @@ UV_CACHE_DIR ?= .uv-cache
 export UV_PROJECT_ENVIRONMENT := .venv
 export UV_CACHE_DIR
 
-.PHONY: sync lint format dead-code test pre-commit-install pre-commit-run recommend-models setup-models items items-refresh judge matrix validate infer infer-blackjax diagnostics plots notebook run
+.PHONY: sync lint format dead-code quality test pre-commit-install pre-commit-run smoke recommend-models setup-models items items-refresh judge matrix validate infer infer-blackjax diagnostics plots notebook run
 
 define log_path
 $(LOG_DIR)/$(1)_$(shell date +'%Y%m%d_%H%M%S').log
@@ -29,13 +29,18 @@ sync:
 	@$(UV) sync
 
 lint:
-	@$(UV) run ruff check src notebooks --fix
+	@$(UV) run ruff check src tests notebooks --fix
 
 format:
-	@$(UV) run ruff format src notebooks
+	@$(UV) run ruff format src tests notebooks
 
 dead-code:
 	@$(UV) run vulture src tests tests/vulture_whitelist.py
+
+quality:
+	@$(MAKE) lint
+	@$(MAKE) format
+	@$(MAKE) dead-code
 
 test:
 	@MPLCONFIGDIR=.uv-cache/matplotlib $(UV) run python -m unittest discover -s tests
@@ -45,6 +50,23 @@ pre-commit-install:
 
 pre-commit-run:
 	@MPLCONFIGDIR=.uv-cache/matplotlib $(UV) run pre-commit run --all-files
+
+smoke: SMOKE_JUDGE_LIMIT = 5
+smoke: SMOKE_JUDGE_1 = deepseek-r1-distill-qwen-14b-pointwise
+smoke: SMOKE_JUDGE_2 = deepseek-r1-distill-qwen-14b-pairwise
+smoke: SMOKE_JUDGE_3 = deepseek-r1-distill-qwen-14b-pointwise-cot
+smoke: SMOKE_JUDGE_4 = deepseek-r1-distill-qwen-14b-pairwise-cot
+smoke:
+	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_1) LIMIT=$(SMOKE_JUDGE_LIMIT)
+	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_2) LIMIT=$(SMOKE_JUDGE_LIMIT)
+	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_3) LIMIT=$(SMOKE_JUDGE_LIMIT)
+	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_4) LIMIT=$(SMOKE_JUDGE_LIMIT)
+	@$(MAKE) judge CONFIG=$(CONFIG)
+	@$(MAKE) matrix CONFIG=$(CONFIG)
+	@$(MAKE) validate CONFIG=$(CONFIG)
+	@$(MAKE) infer CONFIG=$(CONFIG)
+	@$(MAKE) diagnostics CONFIG=$(CONFIG)
+	@$(MAKE) plots CONFIG=$(CONFIG)
 
 recommend-models:
 	@$(call run_and_log,recommend_models,bash scripts/recommend_models.sh)
