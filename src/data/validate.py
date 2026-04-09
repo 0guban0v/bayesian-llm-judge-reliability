@@ -82,7 +82,8 @@ def main() -> None:
     validate_matrix(matrix, [judge.id for judge in config.judges])
     summary = summarize_matrix(matrix)
     logger.info("items_ok")
-    logger.info("validation summary\n%s", format_table_for_log(summary))
+    if logger.isEnabledFor(logging.INFO):
+        logger.info("validation summary\n%s", format_table_for_log(summary))
 
 
 if __name__ == "__main__":
