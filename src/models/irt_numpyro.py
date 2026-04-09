@@ -262,7 +262,8 @@ def main() -> None:
     )
     summary = summarize_judges(samples, observations["judge_ids"])
     logger.info("saved_posterior=%s", output_path)
-    logger.info("judge summary\n%s", format_table_for_log(summary))
+    if logger.isEnabledFor(logging.INFO):
+        logger.info("judge summary\n%s", format_table_for_log(summary))
 
 
 if __name__ == "__main__":

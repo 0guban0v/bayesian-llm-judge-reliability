@@ -228,7 +228,8 @@ def main() -> None:
             chain_count,
         )
     summary = summarize_diagnostics(posterior)
-    logger.info("diagnostic summary\n%s", format_table_for_log(summary))
+    if logger.isEnabledFor(logging.INFO):
+        logger.info("diagnostic summary\n%s", format_table_for_log(summary))
     judge_ids = posterior["judge_ids"]
     item_ids = posterior["item_ids"]
     trace_dir = Path("figures") / "diagnostics"
