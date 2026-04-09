@@ -42,6 +42,23 @@ def judge_index_map(judge_ids: np.ndarray) -> dict[str, int]:
     return {str(judge_id): index for index, judge_id in enumerate(judge_ids.tolist())}
 
 
+def resolve_judge_indices(
+    posterior: dict[str, np.ndarray],
+    judge_a: str,
+    judge_b: str,
+) -> tuple[int, int]:
+    """Resolve two judge IDs to posterior indices with a user-facing error."""
+
+    mapping = judge_index_map(posterior["judge_ids"])
+    try:
+        return mapping[judge_a], mapping[judge_b]
+    except KeyError as exc:
+        available = ", ".join(sorted(mapping))
+        missing = exc.args[0]
+        msg = f"Unknown judge ID '{missing}'. Available judge IDs: {available}"
+        raise ValueError(msg) from exc
+
+
 def credible_interval(samples: np.ndarray, level: float = 0.9) -> tuple[float, float]:
     """Return an equal-tailed credible interval."""
 
@@ -57,8 +74,8 @@ def probability_judge_a_exceeds_b(
     """Compute `P(theta_a > theta_b | data)`."""
 
     theta_samples = flatten_draws(posterior["theta"])
-    mapping = judge_index_map(posterior["judge_ids"])
-    difference = theta_samples[:, mapping[judge_a]] - theta_samples[:, mapping[judge_b]]
+    judge_a_index, judge_b_index = resolve_judge_indices(posterior, judge_a, judge_b)
+    difference = theta_samples[:, judge_a_index] - theta_samples[:, judge_b_index]
     return float((difference > 0.0).mean())
 
 
@@ -70,8 +87,8 @@ def effect_size(
     """Compute the standardized posterior mean difference between two judges."""
 
     theta_samples = flatten_draws(posterior["theta"])
-    mapping = judge_index_map(posterior["judge_ids"])
-    difference = theta_samples[:, mapping[judge_a]] - theta_samples[:, mapping[judge_b]]
+    judge_a_index, judge_b_index = resolve_judge_indices(posterior, judge_a, judge_b)
+    difference = theta_samples[:, judge_a_index] - theta_samples[:, judge_b_index]
     return float(difference.mean() / difference.std())
 
 
@@ -108,10 +125,12 @@ def main() -> None:
     if args.judge_a and args.judge_b:
         probability = probability_judge_a_exceeds_b(posterior, args.judge_a, args.judge_b)
         theta_samples = flatten_draws(posterior["theta"])
-        mapping = judge_index_map(posterior["judge_ids"])
-        difference = (
-            theta_samples[:, mapping[args.judge_a]] - theta_samples[:, mapping[args.judge_b]]
+        judge_a_index, judge_b_index = resolve_judge_indices(
+            posterior,
+            args.judge_a,
+            args.judge_b,
         )
+        difference = theta_samples[:, judge_a_index] - theta_samples[:, judge_b_index]
         interval = credible_interval(difference)
         standardized = effect_size(posterior, args.judge_a, args.judge_b)
         logger.info("p(theta_%s > theta_%s) = %.3f", args.judge_a, args.judge_b, probability)

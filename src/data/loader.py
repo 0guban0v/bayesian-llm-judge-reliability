@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 from pathlib import Path
 
 import polars as pl
@@ -48,12 +49,33 @@ def parse_args() -> argparse.Namespace:
 
 
 def _matches_categories(source: str, categories: list[str]) -> bool:
-    """Return whether a JudgeBench source matches any configured category substring."""
+    """Return whether a JudgeBench source matches any configured category token sequence."""
 
     if not categories:
         return True
-    normalized_source = source.casefold()
-    return any(category.casefold() in normalized_source for category in categories)
+    source_tokens = _category_tokens(source)
+    return any(
+        _contains_token_sequence(source_tokens, _category_tokens(category))
+        for category in categories
+    )
+
+
+def _category_tokens(value: str) -> list[str]:
+    """Normalize a source/category string into comparable lowercase word tokens."""
+
+    return [token for token in re.split(r"[^a-z0-9]+", value.casefold()) if token]
+
+
+def _contains_token_sequence(source_tokens: list[str], category_tokens: list[str]) -> bool:
+    """Return whether category tokens appear contiguously inside source tokens."""
+
+    if not category_tokens:
+        return False
+    window = len(category_tokens)
+    for start in range(len(source_tokens) - window + 1):
+        if source_tokens[start : start + window] == category_tokens:
+            return True
+    return False
 
 
 def _dataset_to_frame(dataset_name: str, split_name: str) -> pl.DataFrame:

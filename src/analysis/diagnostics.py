@@ -79,7 +79,13 @@ def _compute_standard_rhat(flattened: np.ndarray) -> np.ndarray:
     between = draws * ((chain_means - overall_mean) ** 2).sum(axis=0) / (chains - 1)
     within = flattened.var(axis=1, ddof=1).mean(axis=0)
     variance_estimate = ((draws - 1) / draws) * within + between / draws
-    return np.sqrt(variance_estimate / within)
+    ratio = np.divide(
+        variance_estimate,
+        within,
+        out=np.full(features, np.nan, dtype=float),
+        where=within != 0,
+    )
+    return np.sqrt(ratio)
 
 
 def compute_rhat(samples: np.ndarray) -> np.ndarray:
@@ -232,7 +238,7 @@ def main() -> None:
         logger.info("diagnostic summary\n%s", format_table_for_log(summary))
     judge_ids = posterior["judge_ids"]
     item_ids = posterior["item_ids"]
-    trace_dir = Path("figures") / "diagnostics"
+    trace_dir = config.figures_dir / "diagnostics"
     save_figure(
         plot_trace(posterior["theta"], judge_ids, "Judge Reliability Trace"),
         trace_dir / "theta_trace",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from src.schemas import InferenceConfig
+from src.schemas import ExperimentConfig, InferenceConfig
 
 
 class InferenceConfigTests(unittest.TestCase):
@@ -46,6 +46,16 @@ class InferenceConfigTests(unittest.TestCase):
             resolved,
             Path("data/processed/posteriors/irt_2pl_blackjax.npz"),
         )
+
+    def test_from_yaml_resolves_repo_relative_paths(self) -> None:
+        config = ExperimentConfig.from_yaml("configs/experiment.yaml")
+
+        self.assertTrue(config.data.output_dir.is_absolute())
+        self.assertTrue(config.data.raw_dir.is_absolute())
+        self.assertTrue(config.data.logs_dir.is_absolute())
+        self.assertTrue(config.inference.output_dir.is_absolute())
+        self.assertEqual(config.figures_dir, Path.cwd() / "figures")
+        self.assertEqual(config.report_dir, Path.cwd() / "report")
 
 
 if __name__ == "__main__":
