@@ -17,7 +17,13 @@ def _standard_rhat(flattened: np.ndarray) -> np.ndarray:
     between = draws * ((chain_means - overall_mean) ** 2).sum(axis=0) / (chains - 1)
     within = flattened.var(axis=1, ddof=1).mean(axis=0)
     variance_estimate = ((draws - 1) / draws) * within + between / draws
-    return np.sqrt(variance_estimate / within)
+    ratio = np.divide(
+        variance_estimate,
+        within,
+        out=np.full(features, np.nan, dtype=float),
+        where=within != 0,
+    )
+    return np.sqrt(ratio)
 
 
 class ComputeRhatTests(unittest.TestCase):
@@ -26,18 +32,18 @@ class ComputeRhatTests(unittest.TestCase):
     def test_compute_rhat_matches_manual_split(self) -> None:
         samples = np.asarray(
             [
-                [[0.0], [0.0], [10.0], [10.0]],
-                [[0.0], [0.0], [10.0], [10.0]],
+                [[0.0], [1.0], [10.0], [11.0]],
+                [[0.0], [1.0], [10.0], [11.0]],
             ]
         )
 
         expected = _standard_rhat(
             np.asarray(
                 [
-                    [[0.0], [0.0]],
-                    [[0.0], [0.0]],
-                    [[10.0], [10.0]],
-                    [[10.0], [10.0]],
+                    [[0.0], [1.0]],
+                    [[0.0], [1.0]],
+                    [[10.0], [11.0]],
+                    [[10.0], [11.0]],
                 ]
             )
         )
@@ -47,6 +53,18 @@ class ComputeRhatTests(unittest.TestCase):
 
     def test_compute_rhat_returns_nan_when_split_draws_too_short(self) -> None:
         samples = np.asarray([[[0.0], [1.0]], [[0.0], [1.0]]])
+
+        result = compute_rhat(samples)
+
+        self.assertTrue(np.isnan(result[0]))
+
+    def test_compute_rhat_returns_nan_for_zero_within_chain_variance(self) -> None:
+        samples = np.asarray(
+            [
+                [[1.0], [1.0], [1.0], [1.0]],
+                [[2.0], [2.0], [2.0], [2.0]],
+            ]
+        )
 
         result = compute_rhat(samples)
 

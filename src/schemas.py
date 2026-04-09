@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 PROMPT_TEMPLATE_NAMES = {"pointwise", "pointwise_cot", "pairwise", "pairwise_cot"}
 
@@ -132,6 +132,7 @@ class ExperimentConfig(BaseModel):
     judges: list[JudgeConfig]
     inference: InferenceConfig
     model: IRTConfig
+    _project_root: Path = PrivateAttr(default=Path.cwd())
 
     @model_validator(mode="after")
     def ensure_unique_judge_ids(self) -> ExperimentConfig:
@@ -146,10 +147,35 @@ class ExperimentConfig(BaseModel):
     def from_yaml(cls, path: str | Path) -> ExperimentConfig:
         """Load an experiment configuration from YAML."""
 
-        config_path = Path(path)
+        config_path = Path(path).resolve()
         with config_path.open("r", encoding="utf-8") as handle:
             payload = yaml.safe_load(handle)
-        return cls.model_validate(payload)
+        config = cls.model_validate(payload)
+        project_root = (
+            config_path.parent.parent
+            if config_path.parent.name == "configs"
+            else config_path.parent
+        )
+        config._project_root = project_root
+        config.data.output_dir = _resolve_project_path(project_root, config.data.output_dir)
+        config.data.raw_dir = _resolve_project_path(project_root, config.data.raw_dir)
+        config.data.logs_dir = _resolve_project_path(project_root, config.data.logs_dir)
+        config.inference.output_dir = _resolve_project_path(
+            project_root, config.inference.output_dir
+        )
+        return config
+
+    @property
+    def figures_dir(self) -> Path:
+        """Return the repository-relative figures directory."""
+
+        return self._project_root / "figures"
+
+    @property
+    def report_dir(self) -> Path:
+        """Return the repository-relative report directory."""
+
+        return self._project_root / "report"
 
     def ensure_directories(self) -> None:
         """Create the directories used by the pipeline."""
@@ -159,8 +185,8 @@ class ExperimentConfig(BaseModel):
             self.data.raw_dir,
             self.data.logs_dir,
             self.inference.output_dir,
-            Path("figures"),
-            Path("report"),
+            self.figures_dir,
+            self.report_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -187,3 +213,11 @@ class JudgeResult(BaseModel):
         payload = self.model_dump()
         payload["timestamp"] = self.timestamp.isoformat()
         return payload
+
+
+def _resolve_project_path(project_root: Path, path: Path) -> Path:
+    """Resolve a config path relative to the repository root."""
+
+    if path.is_absolute():
+        return path
+    return project_root / path
