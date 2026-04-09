@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Literal, cast
 
 Verdict = Literal["A", "B", "TIE", "UNKNOWN"]
 _TERMINAL_VERDICT_PATTERNS = (
@@ -16,8 +16,8 @@ _TERMINAL_TIE_PATTERNS = (
     re.compile(r"\[\[A=B\]\]\s*$", re.IGNORECASE),
     re.compile(r"FINAL\s+VERDICT\s*:\s*TIE\s*$", re.IGNORECASE),
     re.compile(r"VERDICT\s*:\s*TIE\s*$", re.IGNORECASE),
-    re.compile(r"TIE\s*$", re.IGNORECASE),
-    re.compile(r"NEITHER\s*$", re.IGNORECASE),
+    re.compile(r"\bTIE\s*$", re.IGNORECASE),
+    re.compile(r"\bNEITHER\s*$", re.IGNORECASE),
 )
 _TERMINAL_LINE_COUNT = 5
 
@@ -28,7 +28,7 @@ def normalize_label(label: str) -> Literal["A>B", "B>A"]:
     normalized = label.strip().upper()
     if normalized not in {"A>B", "B>A"}:
         raise ValueError(f"Unsupported label: {label}")
-    return normalized  # type: ignore[return-value]
+    return cast(Literal["A>B", "B>A"], normalized)
 
 
 def _terminal_window(raw_text: str, max_lines: int = _TERMINAL_LINE_COUNT) -> str:
@@ -62,9 +62,11 @@ def parse_verdict(raw_text: str) -> Verdict:
     for pattern in _TERMINAL_VERDICT_PATTERNS:
         match = pattern.search(terminal_text)
         if match is not None:
-            return match.group(1).upper()  # type: ignore[return-value]
+            verdict = match.group(1).upper()
+            assert verdict in {"A", "B"}
+            return cast(Verdict, verdict)
     if terminal_line in {"A", "B"}:
-        return terminal_line  # type: ignore[return-value]
+        return cast(Verdict, terminal_line)
     return "UNKNOWN"
 
 

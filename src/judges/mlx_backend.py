@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -18,6 +19,17 @@ class LoadedModel:
 
 
 _MODEL_CACHE: dict[tuple[str, bool], LoadedModel] = {}
+
+
+def clear_model_cache() -> None:
+    """Drop all cached MLX models and tokenizers for the current process."""
+
+    cached_models = list(_MODEL_CACHE.values())
+    cleared = len(cached_models)
+    _MODEL_CACHE.clear()
+    del cached_models
+    gc.collect()
+    logger.info("cleared mlx model cache entries=%s", cleared)
 
 
 def get_model(model_name: str, trust_remote_code: bool) -> LoadedModel:

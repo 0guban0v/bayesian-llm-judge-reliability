@@ -8,7 +8,7 @@ import logging
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Literal, TextIO, cast
 
 import polars as pl
 
@@ -104,6 +104,10 @@ def judge_item(
         verdict = swap_verdict(verdict)
     correct = parse_correctness(verdict, item["label"])
     parsed_verdict = verdict if verdict != "UNKNOWN" else None
+    assert prompt_order in {"original", "reversed"}
+    parsed_verdict_literal = (
+        cast(Literal["A", "B", "TIE"], parsed_verdict) if parsed_verdict is not None else None
+    )
     return JudgeResult(
         item_id=item["item_id"],
         judge_id=judge.id,
@@ -112,9 +116,9 @@ def judge_item(
         question=item["question"],
         ground_truth_label=item["label"],
         prompt_variant=judge.prompt_template,
-        prompt_order=prompt_order,  # type: ignore[arg-type]
+        prompt_order=cast(Literal["original", "reversed"], prompt_order),
         raw_response=raw_response,
-        parsed_verdict=parsed_verdict,  # type: ignore[arg-type]
+        parsed_verdict=parsed_verdict_literal,
         correct=correct,
         latency_ms=latency_ms,
     )
