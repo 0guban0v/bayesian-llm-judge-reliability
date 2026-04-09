@@ -27,11 +27,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def save_figure(fig: plt.Figure, output_base: Path) -> None:
-    """Save a matplotlib figure as PNG and PDF."""
+    """Save a matplotlib figure as PNG."""
 
     output_base.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_base.with_suffix(".png"), dpi=300, bbox_inches="tight")
-    fig.savefig(output_base.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
