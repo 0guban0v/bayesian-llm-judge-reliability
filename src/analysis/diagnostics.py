@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 
-from src.logging_utils import configure_logging
+from src.logging_utils import configure_logging, format_table_for_log
 from src.schemas import ExperimentConfig
 
 POSTERIOR_METADATA_KEYS = {
@@ -197,11 +197,10 @@ def plot_rank_histogram(samples: np.ndarray, labels: np.ndarray, title: str) -> 
 
 
 def save_figure(fig: plt.Figure, output_base: Path) -> None:
-    """Save a matplotlib figure as PNG and PDF."""
+    """Save a matplotlib figure as PNG."""
 
     output_base.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_base.with_suffix(".png"), dpi=300, bbox_inches="tight")
-    fig.savefig(output_base.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
@@ -229,7 +228,7 @@ def main() -> None:
             chain_count,
         )
     summary = summarize_diagnostics(posterior)
-    logger.info("diagnostic summary\n%s", summary)
+    logger.info("diagnostic summary\n%s", format_table_for_log(summary))
     judge_ids = posterior["judge_ids"]
     item_ids = posterior["item_ids"]
     trace_dir = Path("figures") / "diagnostics"
