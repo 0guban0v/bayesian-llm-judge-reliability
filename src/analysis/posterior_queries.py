@@ -10,7 +10,7 @@ import numpy as np
 import polars as pl
 
 from src.analysis.diagnostics import flatten_draws, load_posterior
-from src.logging_utils import configure_logging
+from src.logging_utils import configure_logging, format_table_for_log
 from src.schemas import ExperimentConfig
 
 logger = logging.getLogger(__name__)
@@ -118,7 +118,8 @@ def main() -> None:
         logger.info("90%% credible interval = (%.3f, %.3f)", interval[0], interval[1])
         logger.info("standardized difference = %.3f", standardized)
     else:
-        logger.info("judge ranking\n%s", rank_judges(posterior))
+        if logger.isEnabledFor(logging.INFO):
+            logger.info("judge ranking\n%s", format_table_for_log(rank_judges(posterior)))
 
 
 if __name__ == "__main__":
