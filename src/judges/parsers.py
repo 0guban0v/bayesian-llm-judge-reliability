@@ -7,7 +7,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ValidationError, model_validator
 
-ParsedVerdict = Literal["A", "B", "TIE", "UNKNOWN"]
+ParsedVerdict = Literal["A", "B", "UNKNOWN"]
 
 
 class Verdict(StrEnum):
