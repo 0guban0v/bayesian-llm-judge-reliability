@@ -1,0 +1,78 @@
+experiment:
+  name: bayesian-llm-judge-reliability
+  seed: 7
+  date: "2026-04-07"
+
+data:
+  source: judgebench
+  hf_dataset: ScalerLab/JudgeBench
+  splits:
+    - gpt
+    - claude
+  subset_size: 200
+  categories:
+    - reasoning
+    - math
+    - computer science
+    - livecodebench
+  output_dir: data/processed
+  raw_dir: data/raw
+  logs_dir: data/logs
+  item_file: judgebench_items.parquet
+  matrix_file: judge_matrix.parquet
+
+judges:
+  - id: deepseek-r1-distill-qwen-14b-pointwise
+    backend: mlx
+    model: deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+    prompt_template: pointwise
+    max_tokens: 1024
+    trust_remote_code: false
+    reverse_order: false
+  - id: deepseek-r1-distill-qwen-14b-pairwise-cot
+    backend: mlx
+    model: deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+    prompt_template: pairwise_cot
+    max_tokens: 1024
+    trust_remote_code: false
+    reverse_order: true
+  - id: deepseek-r1-distill-qwen-14b-pointwise-cot
+    backend: mlx
+    model: deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+    prompt_template: pointwise_cot
+    max_tokens: 1024
+    trust_remote_code: false
+    reverse_order: false
+  - id: deepseek-r1-distill-qwen-14b-pairwise
+    backend: mlx
+    model: deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+    prompt_template: pairwise
+    max_tokens: 1024
+    trust_remote_code: false
+    reverse_order: true
+
+inference:
+  backend: numpyro
+  sampler: NUTS
+  num_warmup: 500
+  num_samples: 1000
+  num_chains: 2
+  target_accept_prob: 0.85
+  output_dir: data/processed/posteriors
+  file_name: irt_2pl_posterior.npz
+
+model:
+  type: 2PL
+  priors:
+    theta:
+      dist: normal
+      loc: 0.0
+      scale: 1.0
+    b:
+      dist: normal
+      loc: 0.0
+      scale: 2.0
+    a:
+      dist: lognormal
+      loc: 0.0
+      scale: 0.5
