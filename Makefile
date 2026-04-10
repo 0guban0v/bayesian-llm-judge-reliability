@@ -12,7 +12,7 @@ UV_CACHE_DIR ?= .uv-cache
 export UV_PROJECT_ENVIRONMENT := .venv
 export UV_CACHE_DIR
 
-.PHONY: sync lint format dead-code quality test pre-commit-install pre-commit-run smoke recommend-models setup-models items items-refresh judge matrix validate infer infer-blackjax diagnostics plots notebook run
+.PHONY: sync lint format dead-code quality test pre-commit-install pre-commit-run smoke recommend-models verify-models setup-models items items-refresh judge matrix validate infer infer-blackjax diagnostics plots notebook run
 
 define log_path
 $(LOG_DIR)/$(1)_$(shell date +'%Y%m%d_%H%M%S').log
@@ -52,15 +52,13 @@ pre-commit-run:
 	@MPLCONFIGDIR=.uv-cache/matplotlib $(UV) run pre-commit run --all-files
 
 smoke: SMOKE_JUDGE_LIMIT = 5
-smoke: SMOKE_JUDGE_1 = deepseek-r1-distill-qwen-14b-pointwise
-smoke: SMOKE_JUDGE_2 = deepseek-r1-distill-qwen-14b-pairwise
-smoke: SMOKE_JUDGE_3 = deepseek-r1-distill-qwen-14b-pointwise-cot
-smoke: SMOKE_JUDGE_4 = deepseek-r1-distill-qwen-14b-pairwise-cot
+smoke: SMOKE_JUDGE_1 = deepseek-r1-distill-qwen-14b
+smoke: SMOKE_JUDGE_2 = qwen2-5-7b-instruct
+smoke: SMOKE_JUDGE_3 = mistral-7b-instruct-v0-3
 smoke:
 	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_1) LIMIT=$(SMOKE_JUDGE_LIMIT)
 	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_2) LIMIT=$(SMOKE_JUDGE_LIMIT)
 	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_3) LIMIT=$(SMOKE_JUDGE_LIMIT)
-	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_4) LIMIT=$(SMOKE_JUDGE_LIMIT)
 	@$(MAKE) judge CONFIG=$(CONFIG)
 	@$(MAKE) matrix CONFIG=$(CONFIG)
 	@$(MAKE) validate CONFIG=$(CONFIG)
@@ -70,6 +68,9 @@ smoke:
 
 recommend-models:
 	@$(call run_and_log,recommend_models,bash scripts/recommend_models.sh)
+
+verify-models:
+	@$(call run_and_log,verify_models,$(UV) run python scripts/verify_models.py $(MODELS))
 
 setup-models:
 	@$(call run_and_log,setup_models,bash scripts/setup_models.sh $(CONFIG))

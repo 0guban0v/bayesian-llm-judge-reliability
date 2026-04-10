@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+.claude/
 
 /AGENTS.md
 /CLAUDE.md
@@ -14,6 +15,7 @@ __pycache__/
 .mypy_cache/
 
 logs/*.log
+archive/logs/*.log
 
 data/raw/*
 !data/raw/.gitkeep
