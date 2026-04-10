@@ -2,14 +2,16 @@
 
 smoke: SMOKE_JUDGE_LIMIT = 5
 smoke: SMOKE_JUDGE_1 = deepseek-r1-distill-qwen-14b
-smoke: SMOKE_JUDGE_2 = qwen2-5-7b-instruct
-smoke: SMOKE_JUDGE_3 = mistral-7b-instruct-v0-3
-smoke: SMOKE_JUDGE_4 = gemma-2-9b-it
+smoke: SMOKE_JUDGE_2 = deepseek-r1-distill-qwen-7b
+smoke: SMOKE_JUDGE_3 = qwen2-5-7b-instruct
+smoke: SMOKE_JUDGE_4 = mistral-7b-instruct-v0-3
+smoke: SMOKE_JUDGE_5 = gemma-2-9b-it
 smoke:
 	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_1) LIMIT=$(SMOKE_JUDGE_LIMIT)
 	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_2) LIMIT=$(SMOKE_JUDGE_LIMIT)
 	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_3) LIMIT=$(SMOKE_JUDGE_LIMIT)
 	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_4) LIMIT=$(SMOKE_JUDGE_LIMIT)
+	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_5) LIMIT=$(SMOKE_JUDGE_LIMIT)
 	@$(MAKE) judge CONFIG=$(CONFIG)
 	@$(MAKE) matrix CONFIG=$(CONFIG)
 	@$(MAKE) validate CONFIG=$(CONFIG)
