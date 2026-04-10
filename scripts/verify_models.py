@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -19,6 +20,8 @@ class ModelVerificationResult(BaseModel):
     trust_remote_code: bool = False
     loadable: bool = False
     has_chat_template: bool = False
+    verdict_a_token_ids: list[int] = Field(default_factory=list)
+    verdict_b_token_ids: list[int] = Field(default_factory=list)
     verdict_token_ids: list[int] = Field(default_factory=list)
     eos_token_ids: list[int] = Field(default_factory=list)
     token_forms: dict[str, list[int]] = Field(default_factory=dict)
@@ -30,6 +33,8 @@ class ModelVerificationResult(BaseModel):
 
         return (
             self.loadable
+            and bool(self.verdict_a_token_ids)
+            and bool(self.verdict_b_token_ids)
             and bool(self.verdict_token_ids)
             and bool(self.eos_token_ids)
             and self.error is None
@@ -66,14 +71,22 @@ def encode_token_ids(tokenizer: Any, text: str) -> list[int]:
     return [int(token_id) for token_id in token_ids]
 
 
-def resolve_verdict_token_ids(token_forms: dict[str, list[int]]) -> list[int]:
-    """Return single-token encodings usable for constrained verdict generation."""
+def resolve_verdict_label_token_ids(
+    token_forms: dict[str, list[int]],
+) -> tuple[list[int], list[int]]:
+    """Return single-token encodings for A and B separately."""
 
-    verdict_ids: set[int] = set()
-    for token_ids in token_forms.values():
+    a_ids: set[int] = set()
+    b_ids: set[int] = set()
+    for form in ("A", " A"):
+        token_ids = token_forms[form]
         if len(token_ids) == 1:
-            verdict_ids.add(token_ids[0])
-    return sorted(verdict_ids)
+            a_ids.add(token_ids[0])
+    for form in ("B", " B"):
+        token_ids = token_forms[form]
+        if len(token_ids) == 1:
+            b_ids.add(token_ids[0])
+    return sorted(a_ids), sorted(b_ids)
 
 
 def resolve_eos_token_ids(tokenizer: Any) -> list[int]:
@@ -106,19 +119,33 @@ def verify_model(model_name: str, trust_remote_code: bool) -> ModelVerificationR
             error=str(exc),
         )
 
-    token_forms = {
-        "A": encode_token_ids(tokenizer, "A"),
-        "B": encode_token_ids(tokenizer, "B"),
-        " A": encode_token_ids(tokenizer, " A"),
-        " B": encode_token_ids(tokenizer, " B"),
-    }
+    try:
+        token_forms = {
+            "A": encode_token_ids(tokenizer, "A"),
+            "B": encode_token_ids(tokenizer, "B"),
+            " A": encode_token_ids(tokenizer, " A"),
+            " B": encode_token_ids(tokenizer, " B"),
+        }
+        verdict_a_token_ids, verdict_b_token_ids = resolve_verdict_label_token_ids(token_forms)
+        eos_token_ids = resolve_eos_token_ids(tokenizer)
+    except Exception as exc:
+        return ModelVerificationResult(
+            model=model_name,
+            trust_remote_code=trust_remote_code,
+            loadable=True,
+            has_chat_template=hasattr(tokenizer, "apply_chat_template"),
+            error=str(exc),
+        )
+
     return ModelVerificationResult(
         model=model_name,
         trust_remote_code=trust_remote_code,
         loadable=True,
         has_chat_template=hasattr(tokenizer, "apply_chat_template"),
-        verdict_token_ids=resolve_verdict_token_ids(token_forms),
-        eos_token_ids=resolve_eos_token_ids(tokenizer),
+        verdict_a_token_ids=verdict_a_token_ids,
+        verdict_b_token_ids=verdict_b_token_ids,
+        verdict_token_ids=sorted(set(verdict_a_token_ids + verdict_b_token_ids)),
+        eos_token_ids=eos_token_ids,
         token_forms=token_forms,
     )
 
@@ -132,6 +159,7 @@ def configure_logging(json_output: bool) -> None:
     logging.basicConfig(
         level=logging.INFO,
         format=log_format,
+        stream=sys.stdout if json_output else None,
     )
 
 
@@ -140,11 +168,13 @@ def log_result(result: ModelVerificationResult) -> None:
 
     status = "PASS" if result.supported else "FAIL"
     LOGGER.info(
-        "%s model=%s loadable=%s chat_template=%s verdict_ids=%s eos_ids=%s",
+        "%s model=%s loadable=%s chat_template=%s a_ids=%s b_ids=%s verdict_ids=%s eos_ids=%s",
         status,
         result.model,
         result.loadable,
         result.has_chat_template,
+        result.verdict_a_token_ids,
+        result.verdict_b_token_ids,
         result.verdict_token_ids,
         result.eos_token_ids,
     )
