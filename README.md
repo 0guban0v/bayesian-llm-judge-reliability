@@ -33,7 +33,6 @@ make full
 
 ## Docs
 
-- [Docs Index](docs/README.md)
 - [Workflow](docs/workflow.md): setup, model verification, and pipeline commands
 - [Profiling](docs/profiling.md): full-run metrics and stage profiling
 - [Structure](docs/structure.md): repo layout and artifact flow
