@@ -109,12 +109,9 @@ def posterior_predictive_judge_accuracy(
     theta = flatten_draws(posterior["theta"])
     b = flatten_draws(posterior["b"])
     a = flatten_draws(posterior["a"]) if "a" in posterior else np.ones_like(b)
-    predictive = []
-    for draw_index in range(theta.shape[0]):
-        logits = a[draw_index][None, :] * (theta[draw_index][:, None] - b[draw_index][None, :])
-        probabilities = 1.0 / (1.0 + np.exp(-logits))
-        predictive.append(probabilities.mean(axis=1))
-    predictive_array = np.asarray(predictive)
+    logits = a[:, None, :] * (theta[:, :, None] - b[:, None, :])
+    probabilities = 1.0 / (1.0 + np.exp(-logits))
+    predictive_array = probabilities.mean(axis=2)
     return (
         predictive_array.mean(axis=0),
         np.quantile(predictive_array, 0.05, axis=0),
