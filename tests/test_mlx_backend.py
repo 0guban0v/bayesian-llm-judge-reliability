@@ -211,9 +211,27 @@ class MlxBackendTokenizerHelperTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             ValueError,
-            "Tokenizer does not provide single-token verdict labels for A/B",
+            "Tokenizer does not provide single-token verdict labels for both A and B",
         ):
             mlx_backend._resolve_verdict_token_ids(MultiTokenOnlyTokenizer())
+
+    def test_resolve_verdict_token_ids_rejects_when_only_one_label_is_single_token(self) -> None:
+        class OnlyATokenizer:
+            def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+                assert add_special_tokens is False
+                mapping = {
+                    "A": [11],
+                    " A": [21],
+                    "B": [1, 2],
+                    " B": [3, 4],
+                }
+                return mapping[text]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Tokenizer does not provide single-token verdict labels for both A and B",
+        ):
+            mlx_backend._resolve_verdict_token_ids(OnlyATokenizer())
 
     def test_resolve_eos_token_ids_prefers_plural_eos_ids(self) -> None:
         tokenizer = self.FakeTokenizerWithKeywords()
