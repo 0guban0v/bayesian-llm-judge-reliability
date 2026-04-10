@@ -13,7 +13,7 @@ make setup-models
 ## Full Pipeline
 
 ```bash
-make run
+make full
 ```
 
 ## Stepwise Run
