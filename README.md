@@ -23,6 +23,7 @@ configs/experiment.yaml
 uv sync
 make pre-commit-install
 make recommend-models
+make verify-models MODELS="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B Qwen/Qwen2.5-7B-Instruct"
 make setup-models
 uv run python -m src.data.loader --config configs/experiment.yaml
 uv run python -m src.judges.runner --config configs/experiment.yaml
@@ -49,6 +50,12 @@ make pre-commit-run
 ```
 
 `pre-commit` runs YAML hygiene, Ruff, banned-pattern checks, and `vulture` dead-code detection before commit. The full unit suite runs on `pre-push`.
+
+Verify that candidate models satisfy this repo's MLX constrained-decoding path before pinning them in config:
+
+```bash
+make verify-models MODELS="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B Qwen/Qwen2.5-7B-Instruct mistralai/Mistral-7B-Instruct-v0.3"
+```
 
 ## Repository Layout
 
