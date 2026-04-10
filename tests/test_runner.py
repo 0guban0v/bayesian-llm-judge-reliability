@@ -41,6 +41,7 @@ class RunAllTests(unittest.TestCase):
             return 0
 
         with (
+            patch.object(ExperimentConfig, "ensure_directories"),
             patch("src.judges.runner.load_or_prepare_items", return_value=items),
             patch("src.judges.runner.run_judge", side_effect=fake_run_judge),
             patch("src.judges.runner.clear_model_cache"),
