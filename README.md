@@ -19,9 +19,6 @@ Measure how reliable local LLM judges are on JudgeBench with Bayesian Item Respo
 - inference: NumPyro NUTS with reproducible config-driven settings
 - outputs: parquet items/matrix, posterior `.npz`, diagnostics, and figures
 
-> Public viewing only. All rights reserved. No reuse, copying, modification, or
-> redistribution is permitted without prior written permission.
-
 ## Quick Start
 
 ```bash
