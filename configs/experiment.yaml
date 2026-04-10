@@ -9,7 +9,7 @@ data:
   splits:
     - gpt
     - claude
-  subset_size: 200
+  subset_size: 500
   categories:
     - reasoning
     - math
@@ -39,6 +39,13 @@ judges:
   - id: mistral-7b-instruct-v0-3
     backend: mlx
     model: mistralai/Mistral-7B-Instruct-v0.3
+    prompt_template: pointwise
+    max_tokens: 10
+    trust_remote_code: false
+    reverse_order: false
+  - id: gemma-2-9b-it
+    backend: mlx
+    model: google/gemma-2-9b-it
     prompt_template: pointwise
     max_tokens: 10
     trust_remote_code: false
