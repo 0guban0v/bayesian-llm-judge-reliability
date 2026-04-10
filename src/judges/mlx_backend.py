@@ -85,14 +85,19 @@ def _encode_token_ids(tokenizer: Any, text: str) -> list[int]:
 def _resolve_verdict_token_ids(tokenizer: Any) -> list[int]:
     """Return single-token encodings for the constrained verdict labels."""
 
-    token_ids: set[int] = set()
-    for candidate in ("A", "B", " A", " B"):
+    verdict_a_ids: set[int] = set()
+    verdict_b_ids: set[int] = set()
+    for candidate in ("A", " A"):
         encoded = _encode_token_ids(tokenizer, candidate)
         if len(encoded) == 1:
-            token_ids.add(encoded[0])
-    if not token_ids:
-        raise ValueError("Tokenizer does not provide single-token verdict labels for A/B.")
-    return sorted(token_ids)
+            verdict_a_ids.add(encoded[0])
+    for candidate in ("B", " B"):
+        encoded = _encode_token_ids(tokenizer, candidate)
+        if len(encoded) == 1:
+            verdict_b_ids.add(encoded[0])
+    if not verdict_a_ids or not verdict_b_ids:
+        raise ValueError("Tokenizer does not provide single-token verdict labels for both A and B.")
+    return sorted(verdict_a_ids | verdict_b_ids)
 
 
 def _resolve_eos_token_ids(tokenizer: Any) -> list[int]:

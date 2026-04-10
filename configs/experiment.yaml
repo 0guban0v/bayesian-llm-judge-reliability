@@ -25,6 +25,13 @@ judges:
     max_tokens: 10
     trust_remote_code: false
     reverse_order: false
+  - id: deepseek-r1-distill-qwen-7b
+    backend: mlx
+    model: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+    prompt_template: pointwise
+    max_tokens: 10
+    trust_remote_code: false
+    reverse_order: false
   - id: qwen2-5-7b-instruct
     backend: mlx
     model: Qwen/Qwen2.5-7B-Instruct
