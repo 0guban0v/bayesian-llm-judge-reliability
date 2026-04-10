@@ -22,6 +22,7 @@ dependencies = [
   "pre-commit>=4.2.0",
   "polars>=1.17.1",
   "pydantic>=2.10.4",
+  "py-spy>=0.4.0",
   "pyyaml>=6.0.2",
   "ruff>=0.8.4",
   "vulture>=2.14",
