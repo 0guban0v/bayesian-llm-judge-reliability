@@ -20,7 +20,7 @@ or
 cargo install py-spy
 ```
 
-`py-spy` is an external sampling profiler written in Rust. It can record a Python command directly and export a flamegraph or speedscope profile. Source: [py-spy on PyPI](https://pypi.org/project/py-spy/0.4.0/).
+`py-spy` is an external sampling profiler written in Rust. It can record a Python command directly and export a flamegraph or speedscope profile. Source: [py-spy on PyPI](https://pypi.org/project/py-spy/).
 
 ## Targets
 

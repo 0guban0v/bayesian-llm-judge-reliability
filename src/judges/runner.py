@@ -13,7 +13,7 @@ from typing import Any, Literal, TextIO, cast
 import polars as pl
 
 from src.data.loader import load_or_prepare_items
-from src.judges.mlx_backend import generate_text
+from src.judges.mlx_backend import clear_model_cache, generate_text
 from src.judges.parsers import parse_correctness, parse_verdict, swap_verdict
 from src.judges.prompts import format_prompt
 from src.logging_utils import configure_logging
@@ -200,8 +200,11 @@ def run_all(config: ExperimentConfig, judge_id: str | None, limit: int | None) -
         limit if limit is not None else "none",
     )
     for judge in select_judges(config, judge_id):
-        completed = run_judge(config, judge, items)
-        logger.info("judge=%s summary wrote_new_judgments=%s", judge.id, completed)
+        try:
+            completed = run_judge(config, judge, items)
+            logger.info("judge=%s summary wrote_new_judgments=%s", judge.id, completed)
+        finally:
+            clear_model_cache()
 
 
 def main() -> None:

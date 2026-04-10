@@ -10,11 +10,7 @@ data:
     - gpt
     - claude
   subset_size: 500
-  categories:
-    - reasoning
-    - math
-    - computer science
-    - livecodebench
+  categories: []
   output_dir: data/processed
   raw_dir: data/raw
   logs_dir: data/logs
