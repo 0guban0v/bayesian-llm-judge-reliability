@@ -7,8 +7,12 @@ import unittest
 import numpy as np
 import polars as pl
 from src.analysis.plots import (
+    JUDGE_COLOR_PINS,
+    SOURCE_COLOR_PINS,
+    judge_color_map,
     plot_posterior_predictive_check,
     posterior_predictive_judge_accuracy,
+    source_color_map,
     validate_posterior_judge_order,
 )
 
@@ -86,6 +90,49 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
             "Posterior judge order does not match matrix judge column order",
         ):
             plot_posterior_predictive_check(matrix, posterior)
+
+    def test_judge_color_map_uses_pinned_colors_for_known_models(self) -> None:
+        judge_ids = np.asarray(
+            [
+                "deepseek-r1-distill-qwen-14b",
+                "deepseek-r1-distill-qwen-7b",
+                "mistral-7b-instruct-v0-3",
+                "qwen2-5-7b-instruct",
+                "gemma-2-9b-it",
+            ]
+        )
+
+        color_map = judge_color_map(judge_ids)
+
+        self.assertEqual(color_map, JUDGE_COLOR_PINS)
+
+    def test_judge_color_map_fallback_is_deterministic_and_does_not_drift(self) -> None:
+        baseline = judge_color_map(np.asarray(["deepseek-r1-distill-qwen-14b", "judge-x"]))
+        expanded = judge_color_map(
+            np.asarray(["deepseek-r1-distill-qwen-14b", "judge-x", "judge-y"])
+        )
+
+        self.assertEqual(
+            baseline["deepseek-r1-distill-qwen-14b"],
+            expanded["deepseek-r1-distill-qwen-14b"],
+        )
+        self.assertEqual(baseline["judge-x"], expanded["judge-x"])
+        self.assertRegex(baseline["judge-x"], r"^#[0-9a-f]{6}$")
+
+    def test_source_color_map_uses_pinned_colors_for_known_sources(self) -> None:
+        source_ids = list(SOURCE_COLOR_PINS)
+
+        color_map = source_color_map(source_ids)
+
+        self.assertEqual(color_map, SOURCE_COLOR_PINS)
+
+    def test_source_color_map_fallback_is_deterministic_and_does_not_drift(self) -> None:
+        baseline = source_color_map(["livebench-reasoning", "source-x"])
+        expanded = source_color_map(["livebench-reasoning", "source-x", "source-y"])
+
+        self.assertEqual(baseline["livebench-reasoning"], expanded["livebench-reasoning"])
+        self.assertEqual(baseline["source-x"], expanded["source-x"])
+        self.assertRegex(baseline["source-x"], r"^#[0-9a-f]{6}$")
 
 
 if __name__ == "__main__":
