@@ -153,5 +153,92 @@ class MlxBackendCacheTests(unittest.TestCase):
         )
 
 
+class MlxBackendTokenizerHelperTests(unittest.TestCase):
+    """Verify tokenizer helper behavior for constrained decoding."""
+
+    class FakeTokenizerWithKeywords:
+        eos_token_ids = [91, 92]
+
+        def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+            assert add_special_tokens is False
+            mapping = {
+                "A": [11],
+                "B": [12],
+                " A": [21],
+                " B": [22],
+                "multi": [1, 2],
+            }
+            return mapping[text]
+
+    class FakeTokenizerWithoutKeywordArg:
+        eos_token_id = 99
+
+        def encode(self, text: str) -> list[int]:
+            mapping = {
+                "A": [11],
+                "B": [12],
+                " A": [21],
+                " B": [22],
+            }
+            return mapping[text]
+
+    def test_encode_token_ids_uses_add_special_tokens_when_supported(self) -> None:
+        tokenizer = self.FakeTokenizerWithKeywords()
+
+        token_ids = mlx_backend._encode_token_ids(tokenizer, "multi")
+
+        self.assertEqual(token_ids, [1, 2])
+
+    def test_encode_token_ids_falls_back_when_tokenizer_rejects_keyword(self) -> None:
+        tokenizer = self.FakeTokenizerWithoutKeywordArg()
+
+        token_ids = mlx_backend._encode_token_ids(tokenizer, "A")
+
+        self.assertEqual(token_ids, [11])
+
+    def test_resolve_verdict_token_ids_returns_all_single_token_a_b_forms(self) -> None:
+        tokenizer = self.FakeTokenizerWithKeywords()
+
+        token_ids = mlx_backend._resolve_verdict_token_ids(tokenizer)
+
+        self.assertEqual(token_ids, [11, 12, 21, 22])
+
+    def test_resolve_verdict_token_ids_rejects_missing_single_token_forms(self) -> None:
+        class MultiTokenOnlyTokenizer:
+            def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+                assert add_special_tokens is False
+                return [1, 2]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Tokenizer does not provide single-token verdict labels for A/B",
+        ):
+            mlx_backend._resolve_verdict_token_ids(MultiTokenOnlyTokenizer())
+
+    def test_resolve_eos_token_ids_prefers_plural_eos_ids(self) -> None:
+        tokenizer = self.FakeTokenizerWithKeywords()
+
+        eos_ids = mlx_backend._resolve_eos_token_ids(tokenizer)
+
+        self.assertEqual(eos_ids, [91, 92])
+
+    def test_resolve_eos_token_ids_falls_back_to_singular_eos_id(self) -> None:
+        tokenizer = self.FakeTokenizerWithoutKeywordArg()
+
+        eos_ids = mlx_backend._resolve_eos_token_ids(tokenizer)
+
+        self.assertEqual(eos_ids, [99])
+
+    def test_resolve_eos_token_ids_rejects_missing_eos(self) -> None:
+        class NoEosTokenizer:
+            pass
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Tokenizer does not expose EOS token IDs for constrained generation",
+        ):
+            mlx_backend._resolve_eos_token_ids(NoEosTokenizer())
+
+
 if __name__ == "__main__":
     unittest.main()

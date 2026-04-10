@@ -10,8 +10,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 
-import polars as pl
-
 from src.data.loader import load_or_prepare_items
 from src.judges.mlx_backend import clear_model_cache, generate_text
 from src.judges.parsers import parse_correctness, parse_verdict, swap_verdict
@@ -134,7 +132,7 @@ def write_result(handle: TextIO, result: JudgeResult) -> None:
 def run_judge(
     config: ExperimentConfig,
     judge: JudgeConfig,
-    items: pl.DataFrame,
+    items: list[dict[str, Any]],
 ) -> int:
     """Evaluate a configured judge over all pending items."""
 
@@ -142,7 +140,7 @@ def run_judge(
     processed = load_processed_keys(log_path)
     prompt_orders = ("original", "reversed") if judge.reverse_order else ("original",)
     tasks: list[tuple[dict[str, Any], str]] = []
-    for item in items.to_dicts():
+    for item in items:
         for prompt_order in prompt_orders:
             key = (item["item_id"], prompt_order)
             if key not in processed:
@@ -193,6 +191,7 @@ def run_all(config: ExperimentConfig, judge_id: str | None, limit: int | None) -
     items = load_or_prepare_items(config)
     if limit is not None:
         items = items.head(limit)
+    materialized_items = items.to_dicts()
     logger.info(
         "loaded_items=%s judge_filter=%s limit=%s",
         items.height,
@@ -201,7 +200,7 @@ def run_all(config: ExperimentConfig, judge_id: str | None, limit: int | None) -
     )
     for judge in select_judges(config, judge_id):
         try:
-            completed = run_judge(config, judge, items)
+            completed = run_judge(config, judge, materialized_items)
             logger.info("judge=%s summary wrote_new_judgments=%s", judge.id, completed)
         finally:
             clear_model_cache()
