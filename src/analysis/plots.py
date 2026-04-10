@@ -129,7 +129,6 @@ def plot_judge_reliability_ridge(posterior: dict[str, np.ndarray]) -> plt.Figure
     ax.set_yticks([])
     ax.spines["left"].set_visible(False)
     ax.set_xlabel("Posterior reliability (theta)")
-    ax.set_title("Judge Reliability Posterior Ridge Plot")
     style_axis(ax)
     ridge_handles = [
         Patch(
