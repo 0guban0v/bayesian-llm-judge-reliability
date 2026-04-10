@@ -33,3 +33,9 @@ data/processed/posteriors/*
 *.npz
 *.png
 *.pdf
+!figures/
+!figures/*.png
+!figures/*.pdf
+!figures/diagnostics/
+!figures/diagnostics/*.png
+!figures/diagnostics/*.pdf
