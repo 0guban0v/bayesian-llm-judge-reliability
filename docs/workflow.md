@@ -6,7 +6,7 @@
 uv sync
 make pre-commit-install
 make recommend-models
-make verify-models MODELS="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B Qwen/Qwen2.5-7B-Instruct mistralai/Mistral-7B-Instruct-v0.3 google/gemma-2-9b-it"
+make verify-models MODELS="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B deepseek-ai/DeepSeek-R1-Distill-Qwen-7B Qwen/Qwen2.5-7B-Instruct mistralai/Mistral-7B-Instruct-v0.3 google/gemma-2-9b-it"
 make setup-models
 ```
 
