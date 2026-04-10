@@ -11,13 +11,14 @@ Bayesian Item Response Theory (IRT) for measuring how reliable local LLM judges 
 uv sync
 make pre-commit-install
 make setup-models
-make run
+make full
 ```
 
 ## Docs
 
 - [Docs Index](docs/README.md)
 - [Workflow](docs/workflow.md)
+- [Profiling](docs/profiling.md)
 - [Structure](docs/structure.md)
 
 ## License
