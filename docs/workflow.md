@@ -10,6 +10,12 @@ make verify-models MODELS="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B Qwen/Qwen2.5
 make setup-models
 ```
 
+`google/gemma-2-9b-it` is a gated Hugging Face repo. Request access on Hugging Face first, then authenticate locally before `make verify-models` or `make setup-models`:
+
+```bash
+uv run python -m huggingface_hub.commands.huggingface_cli login
+```
+
 ## Full Pipeline
 
 ```bash

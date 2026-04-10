@@ -1,0 +1,16 @@
+{
+  "target": "full",
+  "started_at_utc": "2026-04-10T01:02:58.630956+00:00",
+  "config": "/Users/0gubanov/github/bayesian-llm-judge-reliability/configs/experiment.yaml",
+  "profile_path": null,
+  "metrics_path": "profiles/metrics/full_20260410_010258.json",
+  "wall_time_sec": 1949.8783388331067,
+  "peak_rss_bytes": 25933742080,
+  "peak_rss_mb": 24732.34375,
+  "exit_code": 0,
+  "command": [
+    "/Library/Developer/CommandLineTools/usr/bin/make",
+    "full",
+    "CONFIG=configs/experiment.yaml"
+  ]
+}
