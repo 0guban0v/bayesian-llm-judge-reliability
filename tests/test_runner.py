@@ -29,7 +29,19 @@ class RunAllTests(unittest.TestCase):
                 "label": ["A>B", "B>A"],
             }
         )
-        materialized_items = items.to_dicts()
+        expected_items = [
+            {
+                "item_id": "item-1",
+                "original_id": 1,
+                "split": "gpt",
+                "source": "s1",
+                "question": "q1",
+                "response_model": "m1",
+                "response_a": "a1",
+                "response_b": "b1",
+                "label": "A>B",
+            }
+        ]
         captured_item_lists: list[list[dict[str, object]]] = []
 
         def fake_run_judge(
@@ -45,15 +57,20 @@ class RunAllTests(unittest.TestCase):
             patch("src.judges.runner.load_or_prepare_items", return_value=items),
             patch("src.judges.runner.run_judge", side_effect=fake_run_judge),
             patch("src.judges.runner.clear_model_cache"),
+            patch.object(
+                pl.DataFrame,
+                "to_dicts",
+                autospec=True,
+                wraps=pl.DataFrame.to_dicts,
+            ) as to_dicts_spy,
         ):
             run_all(config, judge_id=None, limit=1)
 
+        to_dicts_spy.assert_called_once()
+        self.assertEqual(len(to_dicts_spy.call_args.args), 1)
+        self.assertIsInstance(to_dicts_spy.call_args.args[0], pl.DataFrame)
         self.assertEqual(len(captured_item_lists), len(config.judges))
-        self.assertTrue(
-            all(runner_items == materialized_items[:1] for runner_items in captured_item_lists)
-        )
-        first_id = id(captured_item_lists[0])
-        self.assertTrue(all(id(runner_items) == first_id for runner_items in captured_item_lists))
+        self.assertTrue(all(runner_items == expected_items for runner_items in captured_item_lists))
 
 
 if __name__ == "__main__":
