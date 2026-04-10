@@ -21,6 +21,10 @@ recommend-models:
 	@$(call run_and_log,recommend_models,bash scripts/recommend_models.sh)
 
 verify-models:
+	@if [ -z "$(strip $(MODELS))" ]; then \
+		echo 'MODELS is required. Example: make verify-models MODELS="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B Qwen/Qwen2.5-7B-Instruct"'; \
+		exit 1; \
+	fi
 	@$(call run_and_log,verify_models,$(UV) run python scripts/verify_models.py $(MODELS))
 
 setup-models:
