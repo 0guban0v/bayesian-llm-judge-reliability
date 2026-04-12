@@ -70,6 +70,24 @@ def validate_matrix(matrix: pl.DataFrame, expected_judges: list[str]) -> None:
         raise ValueError(f"Missing judge columns in processed matrix: {joined}")
 
 
+def assert_complete_judge_coverage(matrix: pl.DataFrame, expected_judges: list[str]) -> None:
+    """Require every configured judge to have non-null outputs for every sampled item."""
+
+    validate_matrix(matrix, expected_judges)
+    summary = summarize_matrix(matrix)
+    incomplete = summary.filter(pl.col("responded_items") != matrix.height)
+    if incomplete.height == 0:
+        return
+    details = ", ".join(
+        f"{row['judge_id']} ({row['responded_items']}/{matrix.height})"
+        for row in incomplete.select(["judge_id", "responded_items"]).to_dicts()
+    )
+    raise ValueError(
+        "Inference requires complete judge coverage for all configured judges. "
+        f"Incomplete judges: {details}"
+    )
+
+
 def main() -> None:
     """CLI entrypoint for validation."""
 
@@ -82,6 +100,12 @@ def main() -> None:
     validate_matrix(matrix, [judge.id for judge in config.judges])
     summary = summarize_matrix(matrix)
     logger.info("items_ok")
+    try:
+        assert_complete_judge_coverage(matrix, [judge.id for judge in config.judges])
+    except ValueError as exc:
+        logger.warning("inference_ready=false reason=%s", exc)
+    else:
+        logger.info("inference_ready=true")
     if logger.isEnabledFor(logging.INFO):
         logger.info("validation summary\n%s", format_table_for_log(summary))
 

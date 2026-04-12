@@ -16,6 +16,7 @@
 ## Modeling Limits
 
 - Current model learns one global reliability parameter per judge. It does not yet allow judge reliability to vary by source family, task type, or response model.
+- The optional `source_hier` variant adds source-specific judge effects with partial pooling, but it still keeps item difficulty global and does not model richer source-by-item interactions.
 - Healthy diagnostics do not rule out model misspecification. A well-mixed posterior can still be the wrong abstraction for the data-generating process.
 - 2PL adds item discrimination flexibility, but that does not guarantee the latent structure is the best representation of LLM-as-judge behavior.
 
