@@ -312,7 +312,6 @@ def main() -> None:
     ridge_figure = plot_judge_reliability_ridge(posterior)
     figures_dir.mkdir(parents=True, exist_ok=True)
     ridge_figure.savefig(figures_dir / "judge_reliability_ridge.png", dpi=300, bbox_inches="tight")
-    ridge_figure.savefig(figures_dir / "hero.png", dpi=300, bbox_inches="tight")
     plt.close(ridge_figure)
     save_figure(
         plot_item_parameter_scatter(matrix, posterior),
