@@ -16,11 +16,7 @@ profile-infer:
 	@mkdir -p $(PROFILE_DIR)
 	@profile_path="$(PROFILE_DIR)/infer_$$(date +'%Y%m%d_%H%M%S').speedscope.json"
 	@echo "writing $$profile_path"
-	@if [ "$$(UV_CACHE_DIR=$(UV_CACHE_DIR) $(UV) run python -c "import sys, logging; logging.disable(logging.CRITICAL); from src.schemas import ExperimentConfig; config = ExperimentConfig.from_yaml(sys.argv[1]); sys.stdout.write(config.inference.backend)" $(CONFIG))" = "blackjax" ]; then \
-		$(UV) run python scripts/profile_command.py --target infer --profile-path "$$profile_path" --config $(CONFIG) -- $(PY_SPY) record --format speedscope -o "$$profile_path" -- $(UV) run python -m src.models.irt_blackjax --config $(CONFIG); \
-	else \
-		$(UV) run python scripts/profile_command.py --target infer --profile-path "$$profile_path" --config $(CONFIG) -- $(PY_SPY) record --format speedscope -o "$$profile_path" -- $(UV) run python -m src.models.irt_numpyro --config $(CONFIG); \
-	fi
+	@$(UV) run python scripts/profile_command.py --target infer --profile-path "$$profile_path" --config $(CONFIG) -- $(PY_SPY) record --format speedscope -o "$$profile_path" -- $(UV) run python -m src.models.infer --config $(CONFIG)
 
 profile-plots:
 	@mkdir -p $(PROFILE_DIR)

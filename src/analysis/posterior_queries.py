@@ -118,9 +118,8 @@ def main() -> None:
     posterior_path = config.inference.posterior_path
     posterior = load_posterior(posterior_path)
     logger.info(
-        "loaded posterior from %s using backend=%s",
+        "loaded posterior from %s using NumPyro",
         posterior_path,
-        config.inference.backend,
     )
     if args.judge_a and args.judge_b:
         probability = probability_judge_a_exceeds_b(posterior, args.judge_a, args.judge_b)
