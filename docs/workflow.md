@@ -22,6 +22,8 @@ uv run python -m huggingface_hub.commands.huggingface_cli login
 make full
 ```
 
+`make judge` resumes from existing judge logs by skipping already recorded `(item_id, prompt_order)` pairs. `make matrix`, `make validate`, `make infer`, `make diagnostics`, and `make plots` rebuild derived artifacts from current logs and should be read only after all intended judges finish. `make smoke` is intentionally different: it runs short compatibility checks, deletes those smoke JSONL files, and then starts the full judge phase from a clean slate.
+
 ## Stepwise Run
 
 ```bash
@@ -40,3 +42,5 @@ make plots
 make pre-commit-run
 make test
 ```
+
+Current local-judge path assumes Apple Silicon with MLX. Sequential multi-model runs are sensitive to Metal unified-memory pressure, and `py-spy` tracing on macOS requires elevated privileges. Avoid running artifact-producing targets with `sudo`; it can leave root-owned Hugging Face cache or repo artifacts behind and break later normal runs.

@@ -2,7 +2,7 @@
 
 Measure how reliable local LLM judges are on JudgeBench with Bayesian Item Response Theory. This repo runs local MLX judges, builds an item-by-judge correctness matrix, and fits Bayesian 1PL/2PL IRT models in NumPyro.
 
-![Judge Reliability Posterior](figures/hero.png)
+![Judge Reliability Posterior](figures/judge_reliability_ridge.png)
 
 ## What It Does
 
