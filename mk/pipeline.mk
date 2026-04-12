@@ -12,6 +12,11 @@ smoke:
 	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_3) LIMIT=$(SMOKE_JUDGE_LIMIT)
 	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_4) LIMIT=$(SMOKE_JUDGE_LIMIT)
 	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_5) LIMIT=$(SMOKE_JUDGE_LIMIT)
+	@rm -f data/logs/$(SMOKE_JUDGE_1).jsonl
+	@rm -f data/logs/$(SMOKE_JUDGE_2).jsonl
+	@rm -f data/logs/$(SMOKE_JUDGE_3).jsonl
+	@rm -f data/logs/$(SMOKE_JUDGE_4).jsonl
+	@rm -f data/logs/$(SMOKE_JUDGE_5).jsonl
 	@$(MAKE) judge CONFIG=$(CONFIG)
 	@$(MAKE) matrix CONFIG=$(CONFIG)
 	@$(MAKE) validate CONFIG=$(CONFIG)

@@ -44,7 +44,7 @@ def __(intro, mo):
 def __(Path, config, load_posterior, mo, pl, rank_judges):
     matrix_path = config.data.matrix_path
     posterior_path = config.inference.posterior_path
-    hero_path = Path("figures/hero.png")
+    hero_path = Path("figures/judge_reliability_ridge.png")
 
     matrix = pl.read_parquet(matrix_path) if matrix_path.exists() else None
     posterior = load_posterior(posterior_path) if posterior_path.exists() else None
