@@ -15,8 +15,10 @@ $(LOG_DIR)/$(1)_$(shell date +'%Y%m%d_%H%M%S').log
 endef
 
 define run_and_log
-	mkdir -p $(LOG_DIR)
-	if [ -f .env ]; then set -a; . ./.env; set +a; fi
-	echo "logging to $(call log_path,$(1))"
-	$(2) 2>&1 | tee >(perl -ne 'BEGIN { $$| = 1 } s/\r/\n/g; print' > "$(call log_path,$(1))")
+	set -o pipefail; \
+	log_path="$(call log_path,$(1))"; \
+	mkdir -p $(LOG_DIR); \
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
+	echo "logging to $$log_path"; \
+	$(2) 2>&1 | tee "$$log_path"
 endef

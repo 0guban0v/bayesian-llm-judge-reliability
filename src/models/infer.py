@@ -5,6 +5,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import polars as pl
+
+from src.data.validate import assert_complete_judge_coverage
 from src.logging_utils import configure_logging
 from src.models.irt_numpyro import run_and_save_posterior
 from src.schemas import ExperimentConfig
@@ -24,6 +27,8 @@ def main() -> None:
     configure_logging()
     args = parse_args()
     config = ExperimentConfig.from_yaml(args.config)
+    matrix = pl.read_parquet(config.data.matrix_path)
+    assert_complete_judge_coverage(matrix, [judge.id for judge in config.judges])
     run_and_save_posterior(config)
 
 

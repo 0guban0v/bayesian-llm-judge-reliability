@@ -7,7 +7,7 @@ verify-models:
 	@$(call run_and_log,verify_models,$(UV) run python scripts/verify_models.py --config $(CONFIG) $(MODELS))
 
 setup-models:
-	@$(call run_and_log,setup_models,bash scripts/setup_models.sh $(CONFIG))
+	@$(call run_and_log,setup_models,$(UV) run python scripts/setup_models.py --config $(CONFIG))
 
 items:
 	@$(call run_and_log,items,$(UV) run python -m src.data.loader --config $(CONFIG))

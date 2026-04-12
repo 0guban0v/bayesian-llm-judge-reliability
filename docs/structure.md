@@ -15,7 +15,7 @@ configs/experiment.yaml
   Why: generated artifacts are derived from a reproducible sampled item set rather than ad hoc runs.
 - `src/judges/`: prompts, parsing, MLX backend, runner
   Why: judge behavior is defined by the whole harness, not just the model ID.
-- `src/models/`: NumPyro and BlackJAX inference
+- `src/models/`: NumPyro IRT model definition and inference
 - `src/analysis/`: diagnostics, figures, posterior queries
 - `notebooks/results.py`: marimo presentation layer
 

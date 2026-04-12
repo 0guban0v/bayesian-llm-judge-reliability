@@ -38,6 +38,7 @@ class ModelPriors:
     theta: PriorSpec
     b: PriorSpec
     a: PriorSpec
+    tau_theta: PriorSpec | None = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,6 +65,14 @@ def build_model_priors(model_config: IRTConfig) -> ModelPriors:
             loc=model_config.priors.a.loc,
             scale=model_config.priors.a.scale,
         ),
+        tau_theta=(
+            PriorSpec(
+                loc=model_config.priors.tau_theta.loc,
+                scale=model_config.priors.tau_theta.scale,
+            )
+            if model_config.priors.tau_theta is not None
+            else None
+        ),
     )
 
 
@@ -71,8 +80,10 @@ def irt_1pl(
     correct=None,
     judge_idx=None,
     item_idx=None,
+    source_idx=None,
     n_judges=None,
     n_items=None,
+    n_sources=None,
     *,
     priors: ModelPriors,
 ):
@@ -98,8 +109,10 @@ def irt_2pl(
     correct=None,
     judge_idx=None,
     item_idx=None,
+    source_idx=None,
     n_judges=None,
     n_items=None,
+    n_sources=None,
     *,
     priors: ModelPriors,
 ):
@@ -125,22 +138,106 @@ def irt_2pl(
         numpyro.sample("correct", dist.Bernoulli(logits=logits), obs=correct)
 
 
+def irt_1pl_source_hier(
+    correct=None,
+    judge_idx=None,
+    item_idx=None,
+    source_idx=None,
+    n_judges=None,
+    n_items=None,
+    n_sources=None,
+    *,
+    priors: ModelPriors,
+):
+    """One-parameter logistic IRT with source-specific judge effects."""
+
+    if priors.tau_theta is None:
+        raise ValueError("source_hier variant requires priors.tau_theta")
+    theta = numpyro.sample(
+        "theta",
+        dist.Normal(priors.theta.loc, priors.theta.scale).expand([n_judges]),
+    )
+    tau_theta = numpyro.sample(
+        "tau_theta",
+        dist.LogNormal(priors.tau_theta.loc, priors.tau_theta.scale).expand([n_judges]),
+    )
+    theta_source = numpyro.sample(
+        "theta_source",
+        dist.Normal(theta[:, None], tau_theta[:, None]).expand([n_judges, n_sources]),
+    )
+    b = numpyro.sample(
+        "b",
+        dist.Normal(priors.b.loc, priors.b.scale).expand([n_items]),
+    )
+    logits = theta_source[judge_idx, source_idx] - b[item_idx]
+    with numpyro.plate("obs", len(correct)):
+        numpyro.sample("correct", dist.Bernoulli(logits=logits), obs=correct)
+
+
+def irt_2pl_source_hier(
+    correct=None,
+    judge_idx=None,
+    item_idx=None,
+    source_idx=None,
+    n_judges=None,
+    n_items=None,
+    n_sources=None,
+    *,
+    priors: ModelPriors,
+):
+    """Two-parameter logistic IRT with source-specific judge effects."""
+
+    if priors.tau_theta is None:
+        raise ValueError("source_hier variant requires priors.tau_theta")
+    theta = numpyro.sample(
+        "theta",
+        dist.Normal(priors.theta.loc, priors.theta.scale).expand([n_judges]),
+    )
+    tau_theta = numpyro.sample(
+        "tau_theta",
+        dist.LogNormal(priors.tau_theta.loc, priors.tau_theta.scale).expand([n_judges]),
+    )
+    theta_source = numpyro.sample(
+        "theta_source",
+        dist.Normal(theta[:, None], tau_theta[:, None]).expand([n_judges, n_sources]),
+    )
+    b = numpyro.sample(
+        "b",
+        dist.Normal(priors.b.loc, priors.b.scale).expand([n_items]),
+    )
+    a = numpyro.sample(
+        "a",
+        dist.LogNormal(priors.a.loc, priors.a.scale).expand([n_items]),
+    )
+    logits = a[item_idx] * (theta_source[judge_idx, source_idx] - b[item_idx])
+    with numpyro.plate("obs", len(correct)):
+        numpyro.sample("correct", dist.Bernoulli(logits=logits), obs=correct)
+
+
 def load_matrix_observations(matrix_path: Path) -> dict[str, Any]:
     """Convert a wide item-by-judge matrix into long-form IRT observations."""
 
     matrix = pl.read_parquet(matrix_path)
     judge_ids = [column for column in matrix.columns if column not in ITEM_METADATA_COLUMNS]
     item_ids = matrix.get_column("item_id").to_list()
+    source_ids = matrix.get_column("source").unique(maintain_order=True).to_list()
     item_lookup = pl.DataFrame(
         {
             "item_id": item_ids,
             "item_idx": np.arange(len(item_ids), dtype=np.int32),
+            "source": matrix.get_column("source"),
         }
     )
     judge_lookup = pl.DataFrame(
         {
             "judge_id": judge_ids,
             "judge_idx": np.arange(len(judge_ids), dtype=np.int32),
+        }
+    )
+    source_lookup = pl.DataFrame(
+        {
+            "source": source_ids,
+            "source_idx": np.arange(len(source_ids), dtype=np.int32),
         }
     )
     observations = (
@@ -154,16 +251,20 @@ def load_matrix_observations(matrix_path: Path) -> dict[str, Any]:
         .drop_nulls("correct")
         .join(item_lookup, on="item_id", how="left")
         .join(judge_lookup, on="judge_id", how="left")
+        .join(source_lookup, on="source", how="left")
         .sort(["item_idx", "judge_idx"])
     )
     return {
         "correct": observations.get_column("correct").cast(pl.Int32).to_numpy(),
         "judge_idx": observations.get_column("judge_idx").to_numpy(),
         "item_idx": observations.get_column("item_idx").to_numpy(),
+        "source_idx": observations.get_column("source_idx").to_numpy(),
         "n_judges": len(judge_ids),
         "n_items": len(item_ids),
+        "n_sources": len(source_ids),
         "judge_ids": np.asarray(judge_ids, dtype=str),
         "item_ids": np.asarray(item_ids, dtype=str),
+        "source_ids": np.asarray(source_ids, dtype=str),
     }
 
 
@@ -174,7 +275,12 @@ def run_mcmc(
     """Run NumPyro NUTS for the configured model."""
 
     priors = build_model_priors(config.model)
-    model_fn = irt_2pl if config.model.type == "2PL" else irt_1pl
+    if config.model.variant == "source_hier" and priors.tau_theta is None:
+        raise ValueError("source_hier variant requires model.priors.tau_theta in config")
+    if config.model.variant == "source_hier":
+        model_fn = irt_2pl_source_hier if config.model.type == "2PL" else irt_1pl_source_hier
+    else:
+        model_fn = irt_2pl if config.model.type == "2PL" else irt_1pl
     model = partial(model_fn, priors=priors)
     kernel = NUTS(model, target_accept_prob=config.inference.target_accept_prob)
     mcmc = MCMC(
@@ -190,8 +296,10 @@ def run_mcmc(
         correct=observations["correct"],
         judge_idx=observations["judge_idx"],
         item_idx=observations["item_idx"],
+        source_idx=observations["source_idx"],
         n_judges=observations["n_judges"],
         n_items=observations["n_items"],
+        n_sources=observations["n_sources"],
     )
     samples = {
         name: np.asarray(values) for name, values in mcmc.get_samples(group_by_chain=True).items()
@@ -215,6 +323,7 @@ def save_posterior(
         **samples,
         "judge_ids": observations["judge_ids"],
         "item_ids": observations["item_ids"],
+        "source_ids": observations["source_ids"],
         "model_type": np.asarray(model_type),
         "n_obs": np.asarray(observations["correct"].shape[0]),
     }

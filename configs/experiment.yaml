@@ -65,6 +65,7 @@ inference:
 
 model:
   type: 2PL
+  variant: source_hier
   priors:
     theta:
       dist: normal
@@ -75,6 +76,10 @@ model:
       loc: 0.0
       scale: 2.0
     a:
+      dist: lognormal
+      loc: 0.0
+      scale: 0.5
+    tau_theta:
       dist: lognormal
       loc: 0.0
       scale: 0.5

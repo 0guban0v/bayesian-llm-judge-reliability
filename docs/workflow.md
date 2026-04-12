@@ -26,6 +26,8 @@ make full
 
 `make judge` resumes from existing judge logs by skipping already recorded `(item_id, prompt_order)` pairs. `make matrix`, `make validate`, `make infer`, `make diagnostics`, and `make plots` rebuild derived artifacts from current logs and should be run only after all intended judges finish.
 
+`make infer` now fails fast on incomplete judge coverage. If any configured judge column is missing or partially observed, inference exits with a coverage error instead of fitting a posterior on an invalid matrix.
+
 ## Stepwise Run
 
 ```bash
