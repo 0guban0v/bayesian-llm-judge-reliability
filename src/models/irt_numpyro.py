@@ -267,16 +267,13 @@ def summarize_item_parameters(samples: dict[str, np.ndarray]) -> pl.DataFrame:
     return pl.DataFrame(rows)
 
 
-def main() -> None:
-    """CLI entrypoint for NumPyro IRT inference."""
+def run_and_save_posterior(config: ExperimentConfig) -> None:
+    """Run NumPyro inference and persist posterior samples."""
 
-    configure_logging()
-    args = parse_args()
-    config = ExperimentConfig.from_yaml(args.config)
     config.ensure_directories()
     observations = load_matrix_observations(config.data.matrix_path)
     _, samples = run_mcmc(config, observations)
-    output_path = config.inference.posterior_path_for_backend("numpyro")
+    output_path = config.inference.posterior_path
     save_posterior(
         output_path,
         samples,
@@ -294,6 +291,15 @@ def main() -> None:
     if logger.isEnabledFor(logging.INFO):
         logger.info("judge summary\n%s", format_table_for_log(summary))
         logger.info("item parameter summary\n%s", format_table_for_log(item_summary))
+
+
+def main() -> None:
+    """CLI entrypoint for NumPyro IRT inference."""
+
+    configure_logging()
+    args = parse_args()
+    config = ExperimentConfig.from_yaml(args.config)
+    run_and_save_posterior(config)
 
 
 if __name__ == "__main__":

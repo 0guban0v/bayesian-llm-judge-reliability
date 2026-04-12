@@ -6,9 +6,12 @@ import argparse
 import json
 import logging
 import sys
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from src.schemas import ExperimentConfig
 
 LOGGER = logging.getLogger("verify_models")
 
@@ -47,7 +50,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Verify MLX model IDs for this repo's constrained verdict decoder."
     )
-    parser.add_argument("models", nargs="+", help="One or more Hugging Face model IDs.")
+    parser.add_argument(
+        "models",
+        nargs="*",
+        help="Optional Hugging Face model IDs. Defaults to judges[*].model from --config.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/experiment.yaml"),
+        help="Experiment config used to resolve default model IDs.",
+    )
     parser.add_argument(
         "--trust-remote-code",
         action="store_true",
@@ -188,7 +201,12 @@ def main() -> None:
 
     args = parse_args()
     configure_logging(args.json)
-    results = [verify_model(model_name, args.trust_remote_code) for model_name in args.models]
+    if args.models:
+        model_names = args.models
+    else:
+        config = ExperimentConfig.from_yaml(args.config)
+        model_names = [judge.model for judge in config.judges]
+    results = [verify_model(model_name, args.trust_remote_code) for model_name in model_names]
 
     if args.json:
         LOGGER.info("%s", json.dumps([result.model_dump() for result in results], indent=2))

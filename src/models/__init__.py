@@ -1,4 +1,4 @@
-"""Bayesian IRT inference backends."""
+"""Bayesian IRT model definitions."""
 
 from __future__ import annotations
 
