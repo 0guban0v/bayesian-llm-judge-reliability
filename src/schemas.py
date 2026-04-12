@@ -84,12 +84,14 @@ class PriorsConfig(BaseModel):
     theta: PriorConfig
     b: PriorConfig
     a: PriorConfig
+    tau_theta: PriorConfig | None = None
 
 
 class IRTConfig(BaseModel):
     """Bayesian IRT model specification."""
 
     type: Literal["1PL", "2PL"]
+    variant: Literal["global", "source_hier"] = "global"
     priors: PriorsConfig
 
 

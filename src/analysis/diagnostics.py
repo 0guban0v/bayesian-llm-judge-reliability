@@ -16,6 +16,7 @@ from src.schemas import ExperimentConfig
 POSTERIOR_METADATA_KEYS = {
     "judge_ids",
     "item_ids",
+    "source_ids",
     "diverging",
     "model_type",
     "n_obs",
@@ -218,9 +219,11 @@ def main() -> None:
     config = ExperimentConfig.from_yaml(args.config)
     posterior_path = config.inference.posterior_path
     posterior = load_posterior(posterior_path)
+    backend = str(posterior.get("backend", "unknown"))
     logger.info(
-        "loaded posterior from %s using NumPyro",
+        "loaded posterior from %s using backend=%s",
         posterior_path,
+        backend,
     )
     chain_count = infer_chain_count(posterior)
     if chain_count < 2:

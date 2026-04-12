@@ -8,7 +8,12 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
-from src.models.irt_numpyro import load_matrix_observations, summarize_item_parameters
+from src.models.irt_numpyro import (
+    load_matrix_observations,
+    run_mcmc,
+    summarize_item_parameters,
+)
+from src.schemas import ExperimentConfig, PriorConfig
 
 
 class LoadMatrixObservationsTests(unittest.TestCase):
@@ -45,6 +50,8 @@ class LoadMatrixObservationsTests(unittest.TestCase):
         )
         self.assertEqual(observations["n_judges"], 2)
         self.assertEqual(observations["n_items"], 3)
+        np.testing.assert_array_equal(observations["source_ids"], np.asarray(["s1", "s2", "s3"]))
+        np.testing.assert_array_equal(observations["source_idx"], np.asarray([0, 0, 1, 2]))
 
 
 class SummarizeItemParametersTests(unittest.TestCase):
@@ -66,6 +73,36 @@ class SummarizeItemParametersTests(unittest.TestCase):
         summary = summarize_item_parameters(samples)
 
         self.assertEqual(summary.get_column("parameter").to_list(), ["b"])
+
+
+class SourceHierModelTests(unittest.TestCase):
+    """Verify the source-aware hierarchical variant runs and returns new parameters."""
+
+    def test_run_mcmc_supports_source_hier_variant(self) -> None:
+        config = ExperimentConfig.from_yaml("configs/experiment.yaml").model_copy(deep=True)
+        config.inference.num_warmup = 2
+        config.inference.num_samples = 4
+        config.inference.num_chains = 1
+        config.model.variant = "source_hier"
+        config.model.priors.tau_theta = PriorConfig(dist="lognormal", loc=0.0, scale=0.5)
+        observations = {
+            "correct": np.asarray([1, 0, 1, 0], dtype=np.int32),
+            "judge_idx": np.asarray([0, 0, 1, 1], dtype=np.int32),
+            "item_idx": np.asarray([0, 1, 0, 1], dtype=np.int32),
+            "source_idx": np.asarray([0, 1, 0, 1], dtype=np.int32),
+            "n_judges": 2,
+            "n_items": 2,
+            "n_sources": 2,
+            "judge_ids": np.asarray(["judge-a", "judge-b"]),
+            "item_ids": np.asarray(["item-1", "item-2"]),
+            "source_ids": np.asarray(["source-a", "source-b"]),
+        }
+
+        _, samples = run_mcmc(config, observations)
+
+        self.assertIn("theta", samples)
+        self.assertIn("tau_theta", samples)
+        self.assertIn("theta_source", samples)
 
 
 if __name__ == "__main__":
