@@ -22,7 +22,7 @@ uv run python -m huggingface_hub.commands.huggingface_cli login
 make full
 ```
 
-`make judge` resumes from existing judge logs by skipping already recorded `(item_id, prompt_order)` pairs. `make matrix`, `make validate`, `make infer`, `make diagnostics`, and `make plots` rebuild derived artifacts from current logs and should be read only after all intended judges finish. `make smoke` is intentionally different: it runs short compatibility checks, deletes those smoke JSONL files, and then starts the full judge phase from a clean slate.
+`make judge` resumes from existing judge logs by skipping already recorded `(item_id, prompt_order)` pairs. `make matrix`, `make validate`, `make infer`, `make diagnostics`, and `make plots` rebuild derived artifacts from current logs and should be run only after all intended judges finish. `make smoke` is intentionally different: it runs short compatibility checks, deletes those smoke JSONL files, and then starts the full judge phase from a clean slate.
 
 ## Stepwise Run
 
