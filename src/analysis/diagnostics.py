@@ -219,9 +219,8 @@ def main() -> None:
     posterior_path = config.inference.posterior_path
     posterior = load_posterior(posterior_path)
     logger.info(
-        "loaded posterior from %s using backend=%s",
+        "loaded posterior from %s using NumPyro",
         posterior_path,
-        config.inference.backend,
     )
     chain_count = infer_chain_count(posterior)
     if chain_count < 2:

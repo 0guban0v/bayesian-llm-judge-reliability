@@ -94,9 +94,8 @@ class IRTConfig(BaseModel):
 
 
 class InferenceConfig(BaseModel):
-    """Inference hyperparameters for NumPyro or BlackJAX samplers."""
+    """Inference hyperparameters for NumPyro NUTS."""
 
-    backend: Literal["numpyro", "blackjax"] = "numpyro"
     sampler: Literal["NUTS"]
     num_warmup: int = Field(gt=0)
     num_samples: int = Field(gt=0)
@@ -105,23 +104,11 @@ class InferenceConfig(BaseModel):
     output_dir: Path = Path("data/processed/posteriors")
     file_name: str = "irt_posterior.npz"
 
-    def posterior_path_for_backend(self, backend: Literal["numpyro", "blackjax"]) -> Path:
-        """Return the backend-specific posterior output path."""
-
-        if backend == "numpyro":
-            return self.output_dir / self.file_name
-        file_path = Path(self.file_name)
-        stem = file_path.stem
-        suffix = file_path.suffix or ".npz"
-        if stem.endswith("_blackjax"):
-            return self.output_dir / f"{stem}{suffix}"
-        return self.output_dir / f"{stem}_blackjax{suffix}"
-
     @property
     def posterior_path(self) -> Path:
-        """Return the configured backend's posterior output path."""
+        """Return the posterior output path."""
 
-        return self.posterior_path_for_backend(self.backend)
+        return self.output_dir / self.file_name
 
 
 class ExperimentConfig(BaseModel):

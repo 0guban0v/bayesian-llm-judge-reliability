@@ -55,7 +55,6 @@ judges:
     reverse_order: false
 
 inference:
-  backend: numpyro
   sampler: NUTS
   num_warmup: 500
   num_samples: 1000

@@ -9,7 +9,6 @@ description = "Bayesian IRT analysis pipeline for LLM-as-judge reliability."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "blackjax>=1.2.5",
   "datasets>=3.2.0",
   "jax>=0.5.0",
   "jaxlib>=0.5.0",

@@ -305,9 +305,8 @@ def main() -> None:
     matrix = pl.read_parquet(config.data.matrix_path)
     figures_dir = config.figures_dir
     logger.info(
-        "loaded posterior from %s using backend=%s",
+        "loaded posterior from %s using NumPyro",
         posterior_path,
-        config.inference.backend,
     )
     ridge_figure = plot_judge_reliability_ridge(posterior)
     figures_dir.mkdir(parents=True, exist_ok=True)
