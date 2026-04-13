@@ -28,6 +28,13 @@ def ensure_mlx_platform() -> None:
 
     if platform.system() != "Darwin":
         raise RuntimeError("mlx setup requires macOS on Apple Silicon.")
+
+    machine = platform.machine().lower()
+    processor = platform.processor().lower()
+    if machine not in {"arm64", "aarch64"} and processor not in {"arm", "arm64", "apple"}:
+        raise RuntimeError(
+            "mlx setup requires Apple Silicon (arm64); Intel macOS is not supported."
+        )
     result = subprocess.run(
         ["system_profiler", "SPDisplaysDataType"],
         capture_output=True,
