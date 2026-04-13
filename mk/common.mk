@@ -15,7 +15,6 @@ $(LOG_DIR)/$(1)_$(shell date +'%Y%m%d_%H%M%S').log
 endef
 
 define run_and_log
-	set -o pipefail; \
 	log_path="$(call log_path,$(1))"; \
 	mkdir -p $(LOG_DIR); \
 	if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
