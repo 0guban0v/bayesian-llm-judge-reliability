@@ -10,8 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
-
-from src.schemas import ExperimentConfig
+from src.schemas import ExperimentConfig, JudgeConfig
 
 LOGGER = logging.getLogger("verify_models")
 
@@ -163,6 +162,20 @@ def verify_model(model_name: str, trust_remote_code: bool) -> ModelVerificationR
     )
 
 
+def unique_model_requests(judges: list[JudgeConfig]) -> list[tuple[str, bool]]:
+    """Return distinct `(model, trust_remote_code)` pairs preserving config order."""
+
+    seen: set[tuple[str, bool]] = set()
+    ordered: list[tuple[str, bool]] = []
+    for judge in judges:
+        key = (judge.model, judge.trust_remote_code)
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(key)
+    return ordered
+
+
 def configure_logging(json_output: bool) -> None:
     """Configure CLI logging."""
 
@@ -202,11 +215,14 @@ def main() -> None:
     args = parse_args()
     configure_logging(args.json)
     if args.models:
-        model_names = args.models
+        requests = [(model_name, args.trust_remote_code) for model_name in args.models]
     else:
         config = ExperimentConfig.from_yaml(args.config)
-        model_names = [judge.model for judge in config.judges]
-    results = [verify_model(model_name, args.trust_remote_code) for model_name in model_names]
+        requests = unique_model_requests(config.judges)
+    results = [
+        verify_model(model_name, trust_remote_code)
+        for model_name, trust_remote_code in requests
+    ]
 
     if args.json:
         LOGGER.info("%s", json.dumps([result.model_dump() for result in results], indent=2))
