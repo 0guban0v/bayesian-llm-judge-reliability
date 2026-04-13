@@ -178,7 +178,7 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
 
         ordered = ordered_source_ids(matrix, posterior)
 
-        self.assertEqual(ordered, ["source-a", "source-b", "source-c"])
+        self.assertEqual(ordered, ["source-a", "source-c", "source-b"])
 
     def test_top_source_ids_limits_small_multiples_to_eight_sources(self) -> None:
         matrix = pl.DataFrame(

@@ -181,6 +181,7 @@ def ordered_source_ids(matrix: pl.DataFrame, posterior: dict[str, np.ndarray]) -
     posterior_source_ids = [str(source_id) for source_id in posterior.get("source_ids", [])]
     if not posterior_source_ids:
         return []
+    posterior_index = {source_id: index for index, source_id in enumerate(posterior_source_ids)}
     source_counts = (
         matrix.group_by("source")
         .len()
@@ -192,7 +193,7 @@ def ordered_source_ids(matrix: pl.DataFrame, posterior: dict[str, np.ndarray]) -
         posterior_source_ids,
         key=lambda source_id: (
             -counts_map.get(source_id, 0),
-            source_id,
+            posterior_index[source_id],
         ),
     )
 
