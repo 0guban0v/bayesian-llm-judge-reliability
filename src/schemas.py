@@ -204,6 +204,20 @@ class JudgeResult(BaseModel):
         return payload
 
 
+def unique_model_requests(judges: list[JudgeConfig]) -> list[tuple[str, bool]]:
+    """Return distinct `(model, trust_remote_code)` pairs preserving config order."""
+
+    seen: set[tuple[str, bool]] = set()
+    ordered: list[tuple[str, bool]] = []
+    for judge in judges:
+        key = (judge.model, judge.trust_remote_code)
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(key)
+    return ordered
+
+
 def _resolve_project_path(project_root: Path, path: Path) -> Path:
     """Resolve a config path relative to the repository root."""
 

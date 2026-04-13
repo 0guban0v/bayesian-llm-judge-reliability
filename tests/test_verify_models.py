@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.verify_models import unique_model_requests
-from src.schemas import JudgeConfig
+from src.schemas import JudgeConfig, unique_model_requests
 
 
 class VerifyModelsTests(unittest.TestCase):

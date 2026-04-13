@@ -48,15 +48,32 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _compile_category_token_sequences(categories: list[str]) -> list[list[str]]:
+    """Normalize configured categories into comparable token sequences once."""
+
+    return [_category_tokens(category) for category in categories]
+
+
+def _matches_category_token_sequences(
+    source_tokens: list[str],
+    category_token_sequences: list[list[str]],
+) -> bool:
+    """Return whether source tokens contain any precompiled category token sequence."""
+
+    if not category_token_sequences:
+        return True
+    return any(
+        _contains_token_sequence(source_tokens, category_tokens)
+        for category_tokens in category_token_sequences
+    )
+
+
 def _matches_categories(source: str, categories: list[str]) -> bool:
     """Return whether a JudgeBench source matches any configured category token sequence."""
 
-    if not categories:
-        return True
-    source_tokens = _category_tokens(source)
-    return any(
-        _contains_token_sequence(source_tokens, _category_tokens(category))
-        for category in categories
+    return _matches_category_token_sequences(
+        _category_tokens(source),
+        _compile_category_token_sequences(categories),
     )
 
 
@@ -103,12 +120,19 @@ def load_judgebench_frame(config: ExperimentConfig) -> pl.DataFrame:
         _dataset_to_frame(config.data.hf_dataset, split_name) for split_name in config.data.splits
     ]
     combined = pl.concat(frames, how="vertical")
-    filtered = combined.filter(
-        pl.col("source").map_elements(
-            lambda source: _matches_categories(str(source), config.data.categories),
-            return_dtype=pl.Boolean,
+    category_token_sequences = _compile_category_token_sequences(config.data.categories)
+    if not config.data.categories:
+        filtered = combined
+    else:
+        filtered = combined.filter(
+            pl.col("source").map_elements(
+                lambda source: _matches_category_token_sequences(
+                    _category_tokens(str(source)),
+                    category_token_sequences,
+                ),
+                return_dtype=pl.Boolean,
+            )
         )
-    )
     subset_size = min(config.data.subset_size, filtered.height)
     return filtered.sample(n=subset_size, seed=config.experiment.seed, shuffle=True)
 

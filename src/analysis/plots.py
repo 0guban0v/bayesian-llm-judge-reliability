@@ -208,6 +208,16 @@ def top_source_ids(
     return ordered_source_ids(matrix, posterior)[:max_sources]
 
 
+def _source_facet_grid_shape(source_count: int, max_columns: int = 2) -> tuple[int, int]:
+    """Return subplot grid dimensions for source small multiples."""
+
+    if source_count <= 0:
+        raise ValueError("Source facet plotting requires at least one source.")
+    columns = min(max_columns, source_count)
+    rows = int(np.ceil(source_count / columns))
+    return rows, columns
+
+
 def source_reliability_summary(
     posterior: dict[str, np.ndarray],
     ordered_sources: list[str],
@@ -269,15 +279,73 @@ def validate_posterior_judge_order(
     raise ValueError(msg)
 
 
+def validate_posterior_item_alignment(
+    matrix: pl.DataFrame,
+    posterior: dict[str, np.ndarray],
+) -> None:
+    """Ensure matrix items and posterior items refer to the same ordered item set."""
+
+    if "item_ids" not in posterior:
+        raise ValueError("Posterior archive does not contain item_ids required for PPC alignment.")
+    posterior_item_ids = np.asarray(posterior["item_ids"], dtype=str)
+    matrix_item_ids = matrix.get_column("item_id").cast(pl.String).to_numpy()
+    if not np.array_equal(matrix_item_ids, posterior_item_ids):
+        msg = (
+            "Posterior item_ids do not match matrix item_id order. "
+            f"matrix={matrix_item_ids.tolist()} posterior={posterior_item_ids.tolist()}"
+        )
+        raise ValueError(msg)
+    if "theta_source" in posterior and "source_ids" in posterior:
+        posterior_source_ids = {str(source_id) for source_id in posterior["source_ids"]}
+        matrix_sources = matrix.get_column("source").cast(pl.String).to_list()
+        missing_sources = sorted(
+            {source for source in matrix_sources if source not in posterior_source_ids}
+        )
+        if missing_sources:
+            msg = (
+                "Matrix sources are missing from posterior source_ids. "
+                f"missing_sources={missing_sources}"
+            )
+            raise ValueError(msg)
+    elif "theta_source" in posterior:
+        raise ValueError(
+            "Posterior archive contains theta_source but is missing source_ids required for PPC."
+        )
+
+
 def posterior_predictive_judge_accuracy(
+    matrix: pl.DataFrame,
     posterior: dict[str, np.ndarray],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Estimate posterior predictive judge accuracy intervals."""
 
-    theta = flatten_draws(posterior["theta"])
+    validate_posterior_item_alignment(matrix, posterior)
     b = flatten_draws(posterior["b"])
     a = flatten_draws(posterior["a"]) if "a" in posterior else np.ones_like(b)
-    logits = a[:, None, :] * (theta[:, :, None] - b[:, None, :])
+    if "theta_source" in posterior and "source_ids" in posterior:
+        item_ids = [str(item_id) for item_id in posterior["item_ids"].tolist()]
+        item_sources = matrix.select(["item_id", "source"]).unique(subset=["item_id"], keep="first")
+        source_lookup = {
+            str(source_id): index for index, source_id in enumerate(posterior["source_ids"])
+        }
+        source_by_item_id = {
+            str(row["item_id"]): source_lookup[str(row["source"])]
+            for row in item_sources.to_dicts()
+        }
+        item_source_idx = np.asarray(
+            [source_by_item_id[item_id] for item_id in item_ids],
+            dtype=int,
+        )
+        theta_source = posterior["theta_source"].reshape(
+            -1,
+            posterior["theta_source"].shape[-2],
+            posterior["theta_source"].shape[-1],
+        )
+        theta_by_item = np.take(theta_source, item_source_idx, axis=2)
+        logits = a[:, None, :] * (theta_by_item - b[:, None, :])
+    else:
+        theta = flatten_draws(posterior["theta"])
+        logits = a[:, None, :] * (theta[:, :, None] - b[:, None, :])
     probabilities = 1.0 / (1.0 + np.exp(-logits))
     predictive_array = probabilities.mean(axis=2)
     return (
@@ -295,7 +363,7 @@ def plot_posterior_predictive_check(
 
     judge_ids, observed = observed_accuracy(matrix)
     validate_posterior_judge_order(judge_ids, posterior)
-    predicted_mean, lower, upper = posterior_predictive_judge_accuracy(posterior)
+    predicted_mean, lower, upper = posterior_predictive_judge_accuracy(matrix, posterior)
     color_map = judge_color_map(judge_ids)
     fig, ax = plt.subplots(figsize=(8, 8))
     y_positions = np.arange(len(judge_ids))
@@ -362,7 +430,11 @@ def plot_judge_reliability_by_source(
 ) -> plt.Figure:
     """Plot source-specific judge reliability intervals as synchronized small multiples."""
 
+    if "theta_source" not in posterior or "source_ids" not in posterior:
+        raise ValueError("Posterior does not contain source-aware reliability samples.")
     ordered_sources = top_source_ids(matrix, posterior)
+    if not ordered_sources:
+        raise ValueError("Source facet plotting requires at least one source.")
     summary = source_reliability_summary(posterior, ordered_sources)
     judge_ids = np.asarray(posterior["judge_ids"], dtype=str)
     global_theta = flatten_draws(posterior["theta"]).mean(axis=0)
@@ -378,9 +450,17 @@ def plot_judge_reliability_by_source(
     theta_max = float(summary.get_column("theta_p95").max())
     x_padding = max(0.1, 0.08 * (theta_max - theta_min))
     y_positions = np.arange(len(ordered_judge_ids), dtype=float)
-    fig, axes = plt.subplots(4, 2, figsize=(12, 14), sharex=True, sharey=True)
+    rows, columns = _source_facet_grid_shape(len(ordered_sources))
+    fig, axes = plt.subplots(
+        rows,
+        columns,
+        figsize=(6 * columns, 3.5 * rows),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
     axes_array = np.asarray(axes).reshape(-1)
-    for axis, source_id in zip(axes_array, ordered_sources, strict=False):
+    for index, (axis, source_id) in enumerate(zip(axes_array, ordered_sources, strict=False)):
         source_rows = summary.filter(pl.col("source") == source_id)
         for y_position, judge_id in zip(y_positions, ordered_judge_ids, strict=False):
             row = source_rows.filter(pl.col("judge_id") == judge_id)
@@ -411,23 +491,22 @@ def plot_judge_reliability_by_source(
             )
         axis.axvline(0.0, color="#9aa0a6", linewidth=1.0, linestyle="--", alpha=0.9, zorder=1)
         axis.set_title(f"{source_id} (n={counts_map.get(source_id, 0)})", fontsize=10)
+        axis.set_xlim(theta_min - x_padding, theta_max + x_padding)
+        axis.set_ylim(len(ordered_judge_ids) - 0.5, -0.5)
+        row_index, column_index = divmod(index, columns)
+        if column_index == 0:
+            axis.set_yticks(y_positions)
+            axis.set_yticklabels(
+                [JUDGE_LABEL_PINS.get(judge_id, judge_id) for judge_id in ordered_judge_ids],
+                fontsize=9,
+            )
+        else:
+            axis.tick_params(axis="y", labelleft=False)
+        if row_index == rows - 1:
+            axis.set_xlabel("Posterior reliability (theta)")
         style_axis(axis)
     for axis in axes_array[len(ordered_sources) :]:
         axis.set_visible(False)
-    for axis in axes_array[::2]:
-        axis.set_yticks(y_positions)
-        axis.set_yticklabels(
-            [JUDGE_LABEL_PINS.get(judge_id, judge_id) for judge_id in ordered_judge_ids],
-            fontsize=9,
-        )
-    for axis in axes_array[1::2]:
-        axis.tick_params(axis="y", labelleft=False)
-    for axis in axes_array[-2:]:
-        if axis.get_visible():
-            axis.set_xlabel("Posterior reliability (theta)")
-    for axis in axes_array[: len(ordered_sources)]:
-        axis.set_xlim(theta_min - x_padding, theta_max + x_padding)
-        axis.set_ylim(len(ordered_judge_ids) - 0.5, -0.5)
     fig.suptitle("Judge Reliability by Source", y=0.995, fontsize=13)
     model_handles = [
         Patch(

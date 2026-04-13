@@ -25,13 +25,15 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
     """Verify posterior predictive judge accuracy stays on the probability scale."""
 
     def test_returns_mean_probabilities_not_inverse_mean(self) -> None:
+        matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s1"]})
         posterior = {
+            "item_ids": np.asarray(["item-1", "item-2"]),
             "theta": np.asarray([[[4.0, -4.0]]]),
             "b": np.asarray([[[0.0, 0.0]]]),
             "a": np.asarray([[[1.0, 1.0]]]),
         }
 
-        predicted_mean, lower, upper = posterior_predictive_judge_accuracy(posterior)
+        predicted_mean, lower, upper = posterior_predictive_judge_accuracy(matrix, posterior)
 
         self.assertLess(predicted_mean[0], 1.0)
         self.assertGreater(predicted_mean[1], 0.0)
@@ -40,18 +42,84 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         np.testing.assert_allclose(upper, predicted_mean)
 
     def test_uses_all_available_draws_for_predictive_intervals(self) -> None:
+        matrix = pl.DataFrame({"item_id": ["item-1"], "source": ["s1"]})
         early_draws = np.full((240, 1), -4.0)
         late_draws = np.full((20, 1), 4.0)
         posterior = {
+            "item_ids": np.asarray(["item-1"]),
             "theta": np.asarray([np.vstack([early_draws, late_draws])]),
             "b": np.asarray([np.zeros((260, 1))]),
             "a": np.asarray([np.ones((260, 1))]),
         }
 
-        predicted_mean, _, upper = posterior_predictive_judge_accuracy(posterior)
+        predicted_mean, _, upper = posterior_predictive_judge_accuracy(matrix, posterior)
 
         self.assertGreater(predicted_mean[0], 0.09)
         self.assertGreater(upper[0], 0.9)
+
+    def test_uses_theta_source_for_source_hier_predictive_accuracy(self) -> None:
+        matrix = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2"],
+                "source": ["source-a", "source-b"],
+            }
+        )
+        posterior = {
+            "item_ids": np.asarray(["item-1", "item-2"]),
+            "source_ids": np.asarray(["source-a", "source-b"]),
+            "theta": np.asarray([[[0.0]]]),
+            "theta_source": np.asarray([[[[3.0, -3.0]]]]),
+            "b": np.asarray([[[0.0, 0.0]]]),
+            "a": np.asarray([[[1.0, 1.0]]]),
+        }
+
+        predicted_mean, lower, upper = posterior_predictive_judge_accuracy(matrix, posterior)
+
+        np.testing.assert_allclose(predicted_mean, np.asarray([0.5]), atol=1e-6)
+        np.testing.assert_allclose(lower, predicted_mean)
+        np.testing.assert_allclose(upper, predicted_mean)
+
+    def test_rejects_item_id_mismatch_between_matrix_and_posterior(self) -> None:
+        matrix = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2"],
+                "source": ["s1", "s1"],
+            }
+        )
+        posterior = {
+            "item_ids": np.asarray(["item-1", "item-x"]),
+            "theta": np.asarray([[[1.0]]]),
+            "b": np.asarray([[[0.0, 0.0]]]),
+            "a": np.asarray([[[1.0, 1.0]]]),
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Posterior item_ids do not match matrix item_id order",
+        ):
+            posterior_predictive_judge_accuracy(matrix, posterior)
+
+    def test_rejects_missing_source_mapping_for_source_hier_posterior(self) -> None:
+        matrix = pl.DataFrame(
+            {
+                "item_id": ["item-1"],
+                "source": ["source-missing"],
+            }
+        )
+        posterior = {
+            "item_ids": np.asarray(["item-1"]),
+            "source_ids": np.asarray(["source-a"]),
+            "theta_source": np.asarray([[[[0.0]]]]),
+            "theta": np.asarray([[[0.0]]]),
+            "b": np.asarray([[[0.0]]]),
+            "a": np.asarray([[[1.0]]]),
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Matrix sources are missing from posterior source_ids",
+        ):
+            posterior_predictive_judge_accuracy(matrix, posterior)
 
     def test_validate_posterior_judge_order_accepts_matching_order(self) -> None:
         matrix_judge_ids = np.asarray(["judge-a", "judge-b"])
@@ -110,6 +178,7 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         )
         posterior = {
             "judge_ids": np.asarray(["judge-a", "judge-b"]),
+            "item_ids": np.asarray(["item-1", "item-2"]),
             "theta": np.asarray([[[1.0, -1.0]]]),
             "b": np.asarray([[[0.0, 0.0]]]),
             "a": np.asarray([[[1.0, 1.0]]]),
@@ -233,6 +302,8 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         self.assertEqual(summary.height, 4)
         self.assertEqual(summary.get_column("source").to_list()[:2], ["source-a", "source-a"])
         visible_axes = [axis for axis in figure.axes if axis.get_visible()]
+        self.assertEqual(len(figure.axes), 2)
+        self.assertEqual(len(visible_axes), 2)
         axes = visible_axes[0]
         self.assertEqual(
             [tick.get_text() for tick in axes.get_yticklabels()],
@@ -241,6 +312,32 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         self.assertEqual(axes.get_title(), "source-a (n=2)")
         self.assertEqual(visible_axes[1].get_title(), "source-b (n=1)")
         self.assertEqual(len(figure.legends), 1)
+
+    def test_plot_judge_reliability_by_source_uses_single_axis_for_one_source(self) -> None:
+        matrix = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2"],
+                "label": ["A>B", "B>A"],
+                "original_id": [1, 2],
+                "question": ["q1", "q2"],
+                "source": ["source-a", "source-a"],
+                "split": ["gpt", "claude"],
+                "judge-a": [1, 0],
+            }
+        )
+        posterior = {
+            "judge_ids": np.asarray(["judge-a"]),
+            "source_ids": np.asarray(["source-a"]),
+            "theta": np.asarray([[[0.6], [0.8]]]),
+            "theta_source": np.asarray([[[[0.2], [0.4]]]]),
+        }
+
+        figure = plot_judge_reliability_by_source(matrix, posterior)
+
+        visible_axes = [axis for axis in figure.axes if axis.get_visible()]
+        self.assertEqual(len(visible_axes), 1)
+        self.assertEqual(visible_axes[0].get_title(), "source-a (n=2)")
+        self.assertEqual(visible_axes[0].get_xlabel(), "Posterior reliability (theta)")
 
 
 if __name__ == "__main__":

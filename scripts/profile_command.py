@@ -4,12 +4,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import resource
 import subprocess
 import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+
+LOGGER = logging.getLogger("profile_command")
+
+
+def normalize_child_ru_maxrss_bytes(raw_ru_maxrss: int, platform: str) -> int:
+    """Normalize child-process ru_maxrss into bytes across platforms."""
+
+    normalized = max(0, raw_ru_maxrss)
+    if platform == "darwin":
+        return normalized
+    return normalized * 1024
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,6 +62,10 @@ def build_metrics_path(
 def main() -> None:
     """Execute the requested command and persist timing metadata."""
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s [profile_command] %(message)s",
+    )
     args = parse_args()
     if args.command and args.command[0] == "--":
         args.command = args.command[1:]
@@ -62,12 +78,10 @@ def main() -> None:
         profile_path.parent.mkdir(parents=True, exist_ok=True)
     metrics_path = build_metrics_path(args.target, started_at, profile_path)
     started_perf = time.perf_counter()
-    before_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     completed = subprocess.run(args.command, check=False)
     wall_time_sec = time.perf_counter() - started_perf
-    after_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    peak_rss_raw = max(0, after_usage.ru_maxrss - before_usage.ru_maxrss)
-    peak_rss_bytes = peak_rss_raw if sys.platform == "darwin" else peak_rss_raw * 1024
+    child_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    peak_rss_bytes = normalize_child_ru_maxrss_bytes(child_usage.ru_maxrss, sys.platform)
     payload = {
         "target": args.target,
         "started_at_utc": started_at.isoformat(),
@@ -81,7 +95,7 @@ def main() -> None:
         "command": args.command,
     }
     metrics_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote metrics {metrics_path}")
+    LOGGER.info("wrote metrics %s", metrics_path)
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
 
