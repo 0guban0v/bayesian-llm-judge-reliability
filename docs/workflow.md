@@ -28,6 +28,8 @@ make full
 
 `make infer` now fails fast on incomplete judge coverage. If any configured judge column is missing or partially observed, inference exits with a coverage error instead of fitting a posterior on an invalid matrix.
 
+`make plots` always regenerates the global ridge, posterior predictive, and item-parameter figures. If the posterior archive includes `theta_source` and `source_ids` from the `source_hier` model variant, it also writes `figures/judge_reliability_by_source.png` as a synchronized small-multiples comparison over the most data-rich sources.
+
 ## Stepwise Run
 
 ```bash

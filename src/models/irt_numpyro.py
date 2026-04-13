@@ -214,18 +214,20 @@ def irt_2pl_source_hier(
         numpyro.sample("correct", dist.Bernoulli(logits=logits), obs=correct)
 
 
-def load_matrix_observations(matrix_path: Path) -> dict[str, Any]:
+def load_matrix_observations(matrix: pl.DataFrame | Path) -> dict[str, Any]:
     """Convert a wide item-by-judge matrix into long-form IRT observations."""
 
-    matrix = pl.read_parquet(matrix_path)
-    judge_ids = [column for column in matrix.columns if column not in ITEM_METADATA_COLUMNS]
-    item_ids = matrix.get_column("item_id").to_list()
-    source_ids = matrix.get_column("source").unique(maintain_order=True).to_list()
+    prepared_matrix = pl.read_parquet(matrix) if isinstance(matrix, Path) else matrix
+    judge_ids = [
+        column for column in prepared_matrix.columns if column not in ITEM_METADATA_COLUMNS
+    ]
+    item_ids = prepared_matrix.get_column("item_id").to_list()
+    source_ids = prepared_matrix.get_column("source").unique(maintain_order=True).to_list()
     item_lookup = pl.DataFrame(
         {
             "item_id": item_ids,
             "item_idx": np.arange(len(item_ids), dtype=np.int32),
-            "source": matrix.get_column("source"),
+            "source": prepared_matrix.get_column("source"),
         }
     )
     judge_lookup = pl.DataFrame(
@@ -241,7 +243,7 @@ def load_matrix_observations(matrix_path: Path) -> dict[str, Any]:
         }
     )
     observations = (
-        matrix.select(["item_id", *judge_ids])
+        prepared_matrix.select(["item_id", *judge_ids])
         .unpivot(
             on=judge_ids,
             index="item_id",
@@ -376,11 +378,13 @@ def summarize_item_parameters(samples: dict[str, np.ndarray]) -> pl.DataFrame:
     return pl.DataFrame(rows)
 
 
-def run_and_save_posterior(config: ExperimentConfig) -> None:
+def run_and_save_posterior(config: ExperimentConfig, matrix: pl.DataFrame | None = None) -> None:
     """Run NumPyro inference and persist posterior samples."""
 
     config.ensure_directories()
-    observations = load_matrix_observations(config.data.matrix_path)
+    observations = load_matrix_observations(
+        matrix if matrix is not None else config.data.matrix_path
+    )
     _, samples = run_mcmc(config, observations)
     output_path = config.inference.posterior_path
     save_posterior(
