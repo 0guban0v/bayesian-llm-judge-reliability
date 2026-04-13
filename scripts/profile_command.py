@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import resource
 import subprocess
 import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+
+LOGGER = logging.getLogger("profile_command")
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,6 +53,10 @@ def build_metrics_path(
 def main() -> None:
     """Execute the requested command and persist timing metadata."""
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s [profile_command] %(message)s",
+    )
     args = parse_args()
     if args.command and args.command[0] == "--":
         args.command = args.command[1:]
@@ -81,7 +88,7 @@ def main() -> None:
         "command": args.command,
     }
     metrics_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote metrics {metrics_path}")
+    LOGGER.info("wrote metrics %s", metrics_path)
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
 
