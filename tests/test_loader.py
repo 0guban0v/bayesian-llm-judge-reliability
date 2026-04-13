@@ -6,7 +6,7 @@ import unittest
 
 import polars as pl
 from src.data.loader import _matches_categories, build_binary_matrix
-from src.data.validate import validate_items
+from src.data.validate import assert_complete_judge_coverage, validate_items
 
 
 class BuildBinaryMatrixTests(unittest.TestCase):
@@ -107,6 +107,46 @@ class ValidateItemsTests(unittest.TestCase):
             "Sampled JudgeBench items contain unsupported labels.",
         ):
             validate_items(items)
+
+
+class ValidateCoverageTests(unittest.TestCase):
+    """Verify inference coverage guard rejects partial judge matrices."""
+
+    def test_accepts_complete_judge_coverage(self) -> None:
+        matrix = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2"],
+                "original_id": [1, 2],
+                "split": ["gpt", "claude"],
+                "source": ["source-a", "source-b"],
+                "question": ["question-a", "question-b"],
+                "label": ["A>B", "B>A"],
+                "judge-a": [1, 0],
+                "judge-b": [0, 1],
+            }
+        )
+
+        assert_complete_judge_coverage(matrix, ["judge-a", "judge-b"])
+
+    def test_rejects_incomplete_judge_coverage(self) -> None:
+        matrix = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2"],
+                "original_id": [1, 2],
+                "split": ["gpt", "claude"],
+                "source": ["source-a", "source-b"],
+                "question": ["question-a", "question-b"],
+                "label": ["A>B", "B>A"],
+                "judge-a": [1, None],
+                "judge-b": [0, 1],
+            }
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"Inference requires complete judge coverage.*judge-a \(1/2\)",
+        ):
+            assert_complete_judge_coverage(matrix, ["judge-a", "judge-b"])
 
 
 if __name__ == "__main__":

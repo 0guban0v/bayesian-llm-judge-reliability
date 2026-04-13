@@ -10,9 +10,13 @@ from src.analysis.plots import (
     JUDGE_COLOR_PINS,
     SOURCE_COLOR_PINS,
     judge_color_map,
+    ordered_source_ids,
+    plot_judge_reliability_by_source,
     plot_posterior_predictive_check,
     posterior_predictive_judge_accuracy,
     source_color_map,
+    source_reliability_summary,
+    top_source_ids,
     validate_posterior_judge_order,
 )
 
@@ -91,6 +95,31 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         ):
             plot_posterior_predictive_check(matrix, posterior)
 
+    def test_plot_posterior_predictive_check_uses_single_judge_legend(self) -> None:
+        matrix = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2"],
+                "label": ["A>B", "B>A"],
+                "original_id": [1, 2],
+                "question": ["q1", "q2"],
+                "source": ["s1", "s1"],
+                "split": ["gpt", "gpt"],
+                "judge-a": [1, 0],
+                "judge-b": [0, 1],
+            }
+        )
+        posterior = {
+            "judge_ids": np.asarray(["judge-a", "judge-b"]),
+            "theta": np.asarray([[[1.0, -1.0]]]),
+            "b": np.asarray([[[0.0, 0.0]]]),
+            "a": np.asarray([[[1.0, 1.0]]]),
+        }
+
+        figure = plot_posterior_predictive_check(matrix, posterior)
+
+        self.assertEqual(len(figure.legends), 1)
+        self.assertEqual(figure.legends[0].get_title().get_text(), "Judges")
+
     def test_judge_color_map_uses_pinned_colors_for_known_models(self) -> None:
         judge_ids = np.asarray(
             [
@@ -133,6 +162,85 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         self.assertEqual(baseline["livebench-reasoning"], expanded["livebench-reasoning"])
         self.assertEqual(baseline["source-x"], expanded["source-x"])
         self.assertRegex(baseline["source-x"], r"^#[0-9a-f]{6}$")
+
+    def test_ordered_source_ids_prefers_high_count_sources(self) -> None:
+        matrix = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2", "item-3", "item-4"],
+                "label": ["A>B", "A>B", "B>A", "B>A"],
+                "original_id": [1, 2, 3, 4],
+                "question": ["q1", "q2", "q3", "q4"],
+                "source": ["source-b", "source-a", "source-a", "source-c"],
+                "split": ["gpt", "gpt", "claude", "claude"],
+            }
+        )
+        posterior = {"source_ids": np.asarray(["source-c", "source-a", "source-b"])}
+
+        ordered = ordered_source_ids(matrix, posterior)
+
+        self.assertEqual(ordered, ["source-a", "source-c", "source-b"])
+
+    def test_top_source_ids_limits_small_multiples_to_eight_sources(self) -> None:
+        matrix = pl.DataFrame(
+            {
+                "item_id": [f"item-{index}" for index in range(9)],
+                "label": ["A>B"] * 9,
+                "original_id": list(range(9)),
+                "question": [f"q{index}" for index in range(9)],
+                "source": [f"source-{index}" for index in range(9)],
+                "split": ["gpt"] * 9,
+            }
+        )
+        posterior = {"source_ids": np.asarray([f"source-{index}" for index in range(9)])}
+
+        limited = top_source_ids(matrix, posterior)
+
+        self.assertEqual(len(limited), 8)
+        self.assertNotIn("source-8", limited)
+
+    def test_source_reliability_summary_and_plot_use_source_order(self) -> None:
+        matrix = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2", "item-3"],
+                "label": ["A>B", "B>A", "A>B"],
+                "original_id": [1, 2, 3],
+                "question": ["q1", "q2", "q3"],
+                "source": ["source-b", "source-a", "source-a"],
+                "split": ["gpt", "gpt", "claude"],
+                "judge-a": [1, 1, 0],
+                "judge-b": [0, 1, 1],
+            }
+        )
+        posterior = {
+            "judge_ids": np.asarray(["judge-a", "judge-b"]),
+            "source_ids": np.asarray(["source-b", "source-a"]),
+            "theta": np.asarray([[[0.6, 0.2], [0.8, 0.4]]]),
+            "theta_source": np.asarray(
+                [
+                    [
+                        [[0.2, 0.8], [0.0, 0.6]],
+                        [[0.4, 1.0], [0.2, 0.8]],
+                    ]
+                ]
+            ),
+        }
+
+        ordered = ordered_source_ids(matrix, posterior)
+        summary = source_reliability_summary(posterior, ordered)
+        figure = plot_judge_reliability_by_source(matrix, posterior)
+
+        self.assertEqual(ordered, ["source-a", "source-b"])
+        self.assertEqual(summary.height, 4)
+        self.assertEqual(summary.get_column("source").to_list()[:2], ["source-a", "source-a"])
+        visible_axes = [axis for axis in figure.axes if axis.get_visible()]
+        axes = visible_axes[0]
+        self.assertEqual(
+            [tick.get_text() for tick in axes.get_yticklabels()],
+            ["judge-a", "judge-b"],
+        )
+        self.assertEqual(axes.get_title(), "source-a (n=2)")
+        self.assertEqual(visible_axes[1].get_title(), "source-b (n=1)")
+        self.assertEqual(len(figure.legends), 1)
 
 
 if __name__ == "__main__":

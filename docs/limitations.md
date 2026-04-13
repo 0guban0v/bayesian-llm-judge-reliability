@@ -16,13 +16,16 @@
 ## Modeling Limits
 
 - Current model learns one global reliability parameter per judge. It does not yet allow judge reliability to vary by source family, task type, or response model.
+- The optional `source_hier` variant adds source-specific judge effects with partial pooling, but it still keeps item difficulty global and does not model richer source-by-item interactions.
 - Healthy diagnostics do not rule out model misspecification. A well-mixed posterior can still be the wrong abstraction for the data-generating process.
 - 2PL adds item discrimination flexibility, but that does not guarantee the latent structure is the best representation of LLM-as-judge behavior.
 
 ## Operational Limits
 
 - Local MLX / Metal memory behavior constrains feasible model panels and execution order.
+- Current judge backend is Apple Silicon / MLX oriented rather than a general cross-platform local inference path.
 - Some candidate models are gated on Hugging Face or require manual local authentication before they can be included in the panel.
+- Supported models must expose EOS token IDs and at least one single-token realization for both `A` and `B`; otherwise constrained verdict-only decoding is not valid.
 - Performance metrics currently capture end-to-end runtime and peak RSS, but stage-level comparisons still require targeted profiling runs to isolate where improvements matter.
 
 ## Claim Limits

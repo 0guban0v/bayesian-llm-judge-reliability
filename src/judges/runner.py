@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
         "--limit",
         type=int,
         default=None,
-        help="Optional item limit for smoke runs.",
+        help="Optional item limit for partial or debugging runs.",
     )
     return parser.parse_args()
 
@@ -146,8 +146,9 @@ def run_judge(
             if key not in processed:
                 tasks.append((item, prompt_order))
     logger.info(
-        "judge=%s model=%s prompt_variant=%s pending_tasks=%s log_path=%s",
+        "judge=%s backend=%s model=%s prompt_variant=%s pending_tasks=%s log_path=%s",
         judge.id,
+        judge.backend,
         judge.model,
         judge.prompt_template,
         len(tasks),
