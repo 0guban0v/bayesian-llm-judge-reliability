@@ -9,7 +9,7 @@ Measure how reliable local LLM judges are on JudgeBench with Bayesian Item Respo
 - runs local judge models with a fixed constrained `FINAL VERDICT: A|B` protocol
 - rebuilds a binary judge-by-item matrix from append-only JSONL logs
 - fits Bayesian IRT to separate judge reliability from item difficulty
-- produces posterior diagnostics and comparison figures
+- produces posterior diagnostics, global judge figures, and source-aware comparison figures
 
 ## Current Setup
 

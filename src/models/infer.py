@@ -29,7 +29,7 @@ def main() -> None:
     config = ExperimentConfig.from_yaml(args.config)
     matrix = pl.read_parquet(config.data.matrix_path)
     assert_complete_judge_coverage(matrix, [judge.id for judge in config.judges])
-    run_and_save_posterior(config)
+    run_and_save_posterior(config, matrix)
 
 
 if __name__ == "__main__":
