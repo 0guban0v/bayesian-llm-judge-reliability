@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 
 from src.logging_utils import configure_logging
-from src.schemas import ExperimentConfig, JudgeConfig
+from src.schemas import ExperimentConfig, unique_model_requests
 
 LOGGER = logging.getLogger("setup_models")
 
@@ -50,20 +50,6 @@ def ensure_mlx_platform() -> None:
         )
 
 
-def unique_judge_models(judges: list[JudgeConfig]) -> list[tuple[str, bool]]:
-    """Return distinct `(model, trust_remote_code)` pairs preserving config order."""
-
-    seen: set[tuple[str, bool]] = set()
-    ordered: list[tuple[str, bool]] = []
-    for judge in judges:
-        key = (judge.model, judge.trust_remote_code)
-        if key in seen:
-            continue
-        seen.add(key)
-        ordered.append(key)
-    return ordered
-
-
 def load_model(model_name: str, trust_remote_code: bool) -> None:
     """Load one MLX model into the local cache."""
 
@@ -90,7 +76,7 @@ def prefetch_models(config: ExperimentConfig) -> None:
     """Load each configured model once and fail if any load does not succeed."""
 
     failures: list[str] = []
-    for model_name, trust_remote_code in unique_judge_models(config.judges):
+    for model_name, trust_remote_code in unique_model_requests(config.judges):
         LOGGER.info("loading %s", model_name)
         try:
             load_model(model_name, trust_remote_code)

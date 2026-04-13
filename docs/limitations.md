@@ -9,7 +9,7 @@
 ## Dataset Limits
 
 - Results are based on a sampled subset of JudgeBench, not the full benchmark.
-- Current sample mixes multiple source families but does not yet model source-specific judge effects.
+- Current sample mixes multiple source families; the active `source_hier` model captures judge-by-source effects, but source heterogeneity is still only partially modeled.
 - Benchmark labels are treated as reference truth, but benchmark noise or ambiguity can still propagate into judge rankings.
 - Removing category filtering broadens coverage, but also increases heterogeneity in task format and difficulty.
 

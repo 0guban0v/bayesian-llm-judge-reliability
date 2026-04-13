@@ -4,10 +4,10 @@ sync:
 	@$(UV) sync
 
 lint:
-	@$(UV) run ruff check src tests notebooks --fix
+	@$(UV) run ruff check src tests notebooks scripts --fix
 
 format:
-	@$(UV) run ruff format src tests notebooks
+	@$(UV) run ruff format src tests notebooks scripts
 
 dead-code:
 	@$(UV) run vulture src tests tests/vulture_whitelist.py

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
-from src.schemas import ExperimentConfig, JudgeConfig
+from src.schemas import ExperimentConfig, unique_model_requests
 
 LOGGER = logging.getLogger("verify_models")
 
@@ -162,20 +162,6 @@ def verify_model(model_name: str, trust_remote_code: bool) -> ModelVerificationR
     )
 
 
-def unique_model_requests(judges: list[JudgeConfig]) -> list[tuple[str, bool]]:
-    """Return distinct `(model, trust_remote_code)` pairs preserving config order."""
-
-    seen: set[tuple[str, bool]] = set()
-    ordered: list[tuple[str, bool]] = []
-    for judge in judges:
-        key = (judge.model, judge.trust_remote_code)
-        if key in seen:
-            continue
-        seen.add(key)
-        ordered.append(key)
-    return ordered
-
-
 def configure_logging(json_output: bool) -> None:
     """Configure CLI logging."""
 
@@ -194,9 +180,13 @@ def log_result(result: ModelVerificationResult) -> None:
 
     status = "PASS" if result.supported else "FAIL"
     LOGGER.info(
-        "%s model=%s loadable=%s chat_template=%s a_ids=%s b_ids=%s verdict_ids=%s eos_ids=%s",
+        (
+            "%s model=%s trust_remote_code=%s loadable=%s chat_template=%s "
+            "a_ids=%s b_ids=%s verdict_ids=%s eos_ids=%s"
+        ),
         status,
         result.model,
+        result.trust_remote_code,
         result.loadable,
         result.has_chat_template,
         result.verdict_a_token_ids,
@@ -204,9 +194,19 @@ def log_result(result: ModelVerificationResult) -> None:
         result.verdict_token_ids,
         result.eos_token_ids,
     )
-    LOGGER.info("token forms model=%s %s", result.model, json.dumps(result.token_forms))
+    LOGGER.info(
+        "token forms model=%s trust_remote_code=%s %s",
+        result.model,
+        result.trust_remote_code,
+        json.dumps(result.token_forms),
+    )
     if result.error is not None:
-        LOGGER.error("error model=%s %s", result.model, result.error)
+        LOGGER.error(
+            "error model=%s trust_remote_code=%s %s",
+            result.model,
+            result.trust_remote_code,
+            result.error,
+        )
 
 
 def main() -> None:
@@ -220,8 +220,7 @@ def main() -> None:
         config = ExperimentConfig.from_yaml(args.config)
         requests = unique_model_requests(config.judges)
     results = [
-        verify_model(model_name, trust_remote_code)
-        for model_name, trust_remote_code in requests
+        verify_model(model_name, trust_remote_code) for model_name, trust_remote_code in requests
     ]
 
     if args.json:
