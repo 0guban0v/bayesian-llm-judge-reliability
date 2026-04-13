@@ -15,6 +15,15 @@ from pathlib import Path
 LOGGER = logging.getLogger("profile_command")
 
 
+def normalize_child_ru_maxrss_bytes(raw_ru_maxrss: int, platform: str) -> int:
+    """Normalize child-process ru_maxrss into bytes across platforms."""
+
+    normalized = max(0, raw_ru_maxrss)
+    if platform == "darwin":
+        return normalized
+    return normalized * 1024
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
 
@@ -69,12 +78,10 @@ def main() -> None:
         profile_path.parent.mkdir(parents=True, exist_ok=True)
     metrics_path = build_metrics_path(args.target, started_at, profile_path)
     started_perf = time.perf_counter()
-    before_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
     completed = subprocess.run(args.command, check=False)
     wall_time_sec = time.perf_counter() - started_perf
-    after_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    peak_rss_raw = max(0, after_usage.ru_maxrss - before_usage.ru_maxrss)
-    peak_rss_bytes = peak_rss_raw if sys.platform == "darwin" else peak_rss_raw * 1024
+    child_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    peak_rss_bytes = normalize_child_ru_maxrss_bytes(child_usage.ru_maxrss, sys.platform)
     payload = {
         "target": args.target,
         "started_at_utc": started_at.isoformat(),
