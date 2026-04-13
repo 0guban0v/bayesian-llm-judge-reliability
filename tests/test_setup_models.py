@@ -5,11 +5,11 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from scripts.setup_models import ensure_mlx_platform, unique_judge_models
-from src.schemas import JudgeConfig
+from scripts.setup_models import ensure_mlx_platform
+from src.schemas import JudgeConfig, unique_model_requests
 
 
-class UniqueJudgeModelsTests(unittest.TestCase):
+class UniqueModelRequestsTests(unittest.TestCase):
     """Verify setup deduplicates model loads while preserving order."""
 
     def test_unique_judge_models_deduplicates_model_and_trust_flag_pairs(self) -> None:
@@ -41,7 +41,7 @@ class UniqueJudgeModelsTests(unittest.TestCase):
         ]
 
         self.assertEqual(
-            unique_judge_models(judges),
+            unique_model_requests(judges),
             [("model-1", False), ("model-1", True), ("model-2", False)],
         )
 
