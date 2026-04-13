@@ -54,6 +54,12 @@ class CategoryMatcherTests(unittest.TestCase):
     def test_does_not_match_related_but_different_phrase(self) -> None:
         self.assertFalse(_matches_categories("computational mathematics", ["math"]))
 
+    def test_empty_category_list_matches_all_sources(self) -> None:
+        self.assertTrue(_matches_categories("any-source", []))
+
+    def test_blank_category_does_not_become_match_all(self) -> None:
+        self.assertFalse(_matches_categories("livebench-math", ["   "]))
+
 
 class ValidateItemsTests(unittest.TestCase):
     """Verify JudgeBench item validation catches malformed subsets."""

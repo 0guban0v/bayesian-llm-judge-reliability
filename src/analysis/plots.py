@@ -208,6 +208,16 @@ def top_source_ids(
     return ordered_source_ids(matrix, posterior)[:max_sources]
 
 
+def _source_facet_grid_shape(source_count: int, max_columns: int = 2) -> tuple[int, int]:
+    """Return subplot grid dimensions for source small multiples."""
+
+    if source_count <= 0:
+        raise ValueError("Source facet plotting requires at least one source.")
+    columns = min(max_columns, source_count)
+    rows = int(np.ceil(source_count / columns))
+    return rows, columns
+
+
 def source_reliability_summary(
     posterior: dict[str, np.ndarray],
     ordered_sources: list[str],
@@ -420,7 +430,11 @@ def plot_judge_reliability_by_source(
 ) -> plt.Figure:
     """Plot source-specific judge reliability intervals as synchronized small multiples."""
 
+    if "theta_source" not in posterior or "source_ids" not in posterior:
+        raise ValueError("Posterior does not contain source-aware reliability samples.")
     ordered_sources = top_source_ids(matrix, posterior)
+    if not ordered_sources:
+        raise ValueError("Source facet plotting requires at least one source.")
     summary = source_reliability_summary(posterior, ordered_sources)
     judge_ids = np.asarray(posterior["judge_ids"], dtype=str)
     global_theta = flatten_draws(posterior["theta"]).mean(axis=0)
@@ -436,9 +450,17 @@ def plot_judge_reliability_by_source(
     theta_max = float(summary.get_column("theta_p95").max())
     x_padding = max(0.1, 0.08 * (theta_max - theta_min))
     y_positions = np.arange(len(ordered_judge_ids), dtype=float)
-    fig, axes = plt.subplots(4, 2, figsize=(12, 14), sharex=True, sharey=True)
+    rows, columns = _source_facet_grid_shape(len(ordered_sources))
+    fig, axes = plt.subplots(
+        rows,
+        columns,
+        figsize=(6 * columns, 3.5 * rows),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
     axes_array = np.asarray(axes).reshape(-1)
-    for axis, source_id in zip(axes_array, ordered_sources, strict=False):
+    for index, (axis, source_id) in enumerate(zip(axes_array, ordered_sources, strict=False)):
         source_rows = summary.filter(pl.col("source") == source_id)
         for y_position, judge_id in zip(y_positions, ordered_judge_ids, strict=False):
             row = source_rows.filter(pl.col("judge_id") == judge_id)
@@ -469,23 +491,22 @@ def plot_judge_reliability_by_source(
             )
         axis.axvline(0.0, color="#9aa0a6", linewidth=1.0, linestyle="--", alpha=0.9, zorder=1)
         axis.set_title(f"{source_id} (n={counts_map.get(source_id, 0)})", fontsize=10)
+        axis.set_xlim(theta_min - x_padding, theta_max + x_padding)
+        axis.set_ylim(len(ordered_judge_ids) - 0.5, -0.5)
+        row_index, column_index = divmod(index, columns)
+        if column_index == 0:
+            axis.set_yticks(y_positions)
+            axis.set_yticklabels(
+                [JUDGE_LABEL_PINS.get(judge_id, judge_id) for judge_id in ordered_judge_ids],
+                fontsize=9,
+            )
+        else:
+            axis.tick_params(axis="y", labelleft=False)
+        if row_index == rows - 1:
+            axis.set_xlabel("Posterior reliability (theta)")
         style_axis(axis)
     for axis in axes_array[len(ordered_sources) :]:
         axis.set_visible(False)
-    for axis in axes_array[::2]:
-        axis.set_yticks(y_positions)
-        axis.set_yticklabels(
-            [JUDGE_LABEL_PINS.get(judge_id, judge_id) for judge_id in ordered_judge_ids],
-            fontsize=9,
-        )
-    for axis in axes_array[1::2]:
-        axis.tick_params(axis="y", labelleft=False)
-    for axis in axes_array[-2:]:
-        if axis.get_visible():
-            axis.set_xlabel("Posterior reliability (theta)")
-    for axis in axes_array[: len(ordered_sources)]:
-        axis.set_xlim(theta_min - x_padding, theta_max + x_padding)
-        axis.set_ylim(len(ordered_judge_ids) - 0.5, -0.5)
     fig.suptitle("Judge Reliability by Source", y=0.995, fontsize=13)
     model_handles = [
         Patch(

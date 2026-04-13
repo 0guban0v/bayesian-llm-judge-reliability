@@ -37,7 +37,7 @@ Each target writes:
 - a speedscope profile to `profiles/`
 - a summary JSON to `profiles/metrics/`
 
-The summary JSON includes wall-clock time, peak RSS, target name, config path, profile path, and exit code, so before/after comparisons do not require opening the trace first.
+The summary JSON includes wall-clock time, target name, config path, profile path, exit code, and `peak_rss_*` fields derived from `resource.RUSAGE_CHILDREN.ru_maxrss`. Those RSS values are normalized to bytes/MB for comparison, but they represent the child-process max RSS reported by the platform rather than an instantaneous sample or summed process-tree memory reading.
 
 ## Notes
 
