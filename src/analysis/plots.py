@@ -269,15 +269,73 @@ def validate_posterior_judge_order(
     raise ValueError(msg)
 
 
+def validate_posterior_item_alignment(
+    matrix: pl.DataFrame,
+    posterior: dict[str, np.ndarray],
+) -> None:
+    """Ensure matrix items and posterior items refer to the same ordered item set."""
+
+    if "item_ids" not in posterior:
+        raise ValueError("Posterior archive does not contain item_ids required for PPC alignment.")
+    posterior_item_ids = np.asarray(posterior["item_ids"], dtype=str)
+    matrix_item_ids = matrix.get_column("item_id").cast(pl.String).to_numpy()
+    if not np.array_equal(matrix_item_ids, posterior_item_ids):
+        msg = (
+            "Posterior item_ids do not match matrix item_id order. "
+            f"matrix={matrix_item_ids.tolist()} posterior={posterior_item_ids.tolist()}"
+        )
+        raise ValueError(msg)
+    if "theta_source" in posterior and "source_ids" in posterior:
+        posterior_source_ids = {str(source_id) for source_id in posterior["source_ids"]}
+        matrix_sources = matrix.get_column("source").cast(pl.String).to_list()
+        missing_sources = sorted(
+            {source for source in matrix_sources if source not in posterior_source_ids}
+        )
+        if missing_sources:
+            msg = (
+                "Matrix sources are missing from posterior source_ids. "
+                f"missing_sources={missing_sources}"
+            )
+            raise ValueError(msg)
+    elif "theta_source" in posterior:
+        raise ValueError(
+            "Posterior archive contains theta_source but is missing source_ids required for PPC."
+        )
+
+
 def posterior_predictive_judge_accuracy(
+    matrix: pl.DataFrame,
     posterior: dict[str, np.ndarray],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Estimate posterior predictive judge accuracy intervals."""
 
-    theta = flatten_draws(posterior["theta"])
+    validate_posterior_item_alignment(matrix, posterior)
     b = flatten_draws(posterior["b"])
     a = flatten_draws(posterior["a"]) if "a" in posterior else np.ones_like(b)
-    logits = a[:, None, :] * (theta[:, :, None] - b[:, None, :])
+    if "theta_source" in posterior and "source_ids" in posterior:
+        item_ids = [str(item_id) for item_id in posterior["item_ids"].tolist()]
+        item_sources = matrix.select(["item_id", "source"]).unique(subset=["item_id"], keep="first")
+        source_lookup = {
+            str(source_id): index for index, source_id in enumerate(posterior["source_ids"])
+        }
+        source_by_item_id = {
+            str(row["item_id"]): source_lookup[str(row["source"])]
+            for row in item_sources.to_dicts()
+        }
+        item_source_idx = np.asarray(
+            [source_by_item_id[item_id] for item_id in item_ids],
+            dtype=int,
+        )
+        theta_source = posterior["theta_source"].reshape(
+            -1,
+            posterior["theta_source"].shape[-2],
+            posterior["theta_source"].shape[-1],
+        )
+        theta_by_item = np.take(theta_source, item_source_idx, axis=2)
+        logits = a[:, None, :] * (theta_by_item - b[:, None, :])
+    else:
+        theta = flatten_draws(posterior["theta"])
+        logits = a[:, None, :] * (theta[:, :, None] - b[:, None, :])
     probabilities = 1.0 / (1.0 + np.exp(-logits))
     predictive_array = probabilities.mean(axis=2)
     return (
@@ -295,7 +353,7 @@ def plot_posterior_predictive_check(
 
     judge_ids, observed = observed_accuracy(matrix)
     validate_posterior_judge_order(judge_ids, posterior)
-    predicted_mean, lower, upper = posterior_predictive_judge_accuracy(posterior)
+    predicted_mean, lower, upper = posterior_predictive_judge_accuracy(matrix, posterior)
     color_map = judge_color_map(judge_ids)
     fig, ax = plt.subplots(figsize=(8, 8))
     y_positions = np.arange(len(judge_ids))
