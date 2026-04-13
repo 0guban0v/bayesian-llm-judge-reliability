@@ -6,9 +6,11 @@ import argparse
 import json
 import logging
 import sys
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+from src.schemas import ExperimentConfig, JudgeConfig
 
 LOGGER = logging.getLogger("verify_models")
 
@@ -47,7 +49,17 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Verify MLX model IDs for this repo's constrained verdict decoder."
     )
-    parser.add_argument("models", nargs="+", help="One or more Hugging Face model IDs.")
+    parser.add_argument(
+        "models",
+        nargs="*",
+        help="Optional Hugging Face model IDs. Defaults to judges[*].model from --config.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/experiment.yaml"),
+        help="Experiment config used to resolve default model IDs.",
+    )
     parser.add_argument(
         "--trust-remote-code",
         action="store_true",
@@ -150,6 +162,20 @@ def verify_model(model_name: str, trust_remote_code: bool) -> ModelVerificationR
     )
 
 
+def unique_model_requests(judges: list[JudgeConfig]) -> list[tuple[str, bool]]:
+    """Return distinct `(model, trust_remote_code)` pairs preserving config order."""
+
+    seen: set[tuple[str, bool]] = set()
+    ordered: list[tuple[str, bool]] = []
+    for judge in judges:
+        key = (judge.model, judge.trust_remote_code)
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(key)
+    return ordered
+
+
 def configure_logging(json_output: bool) -> None:
     """Configure CLI logging."""
 
@@ -188,7 +214,15 @@ def main() -> None:
 
     args = parse_args()
     configure_logging(args.json)
-    results = [verify_model(model_name, args.trust_remote_code) for model_name in args.models]
+    if args.models:
+        requests = [(model_name, args.trust_remote_code) for model_name in args.models]
+    else:
+        config = ExperimentConfig.from_yaml(args.config)
+        requests = unique_model_requests(config.judges)
+    results = [
+        verify_model(model_name, trust_remote_code)
+        for model_name, trust_remote_code in requests
+    ]
 
     if args.json:
         LOGGER.info("%s", json.dumps([result.model_dump() for result in results], indent=2))

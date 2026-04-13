@@ -1,36 +1,13 @@
-.PHONY: smoke recommend-models verify-models setup-models items items-refresh judge matrix validate infer infer-blackjax diagnostics plots notebook full
-
-smoke: SMOKE_JUDGE_LIMIT = 5
-smoke: SMOKE_JUDGE_1 = deepseek-r1-distill-qwen-14b
-smoke: SMOKE_JUDGE_2 = deepseek-r1-distill-qwen-7b
-smoke: SMOKE_JUDGE_3 = qwen2-5-7b-instruct
-smoke: SMOKE_JUDGE_4 = mistral-7b-instruct-v0-3
-smoke: SMOKE_JUDGE_5 = gemma-2-9b-it
-smoke:
-	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_1) LIMIT=$(SMOKE_JUDGE_LIMIT)
-	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_2) LIMIT=$(SMOKE_JUDGE_LIMIT)
-	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_3) LIMIT=$(SMOKE_JUDGE_LIMIT)
-	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_4) LIMIT=$(SMOKE_JUDGE_LIMIT)
-	@$(MAKE) judge CONFIG=$(CONFIG) JUDGE=$(SMOKE_JUDGE_5) LIMIT=$(SMOKE_JUDGE_LIMIT)
-	@$(MAKE) judge CONFIG=$(CONFIG)
-	@$(MAKE) matrix CONFIG=$(CONFIG)
-	@$(MAKE) validate CONFIG=$(CONFIG)
-	@$(MAKE) infer CONFIG=$(CONFIG)
-	@$(MAKE) diagnostics CONFIG=$(CONFIG)
-	@$(MAKE) plots CONFIG=$(CONFIG)
+.PHONY: recommend-models verify-models setup-models items items-refresh judge matrix validate infer diagnostics plots notebook full
 
 recommend-models:
 	@$(call run_and_log,recommend_models,bash scripts/recommend_models.sh)
 
 verify-models:
-	@if [ -z "$(strip $(MODELS))" ]; then \
-		echo 'MODELS is required. Example: make verify-models MODELS="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B Qwen/Qwen2.5-7B-Instruct"'; \
-		exit 1; \
-	fi
-	@$(call run_and_log,verify_models,$(UV) run python scripts/verify_models.py $(MODELS))
+	@$(call run_and_log,verify_models,$(UV) run python scripts/verify_models.py --config $(CONFIG) $(MODELS))
 
 setup-models:
-	@$(call run_and_log,setup_models,bash scripts/setup_models.sh $(CONFIG))
+	@$(call run_and_log,setup_models,$(UV) run python scripts/setup_models.py --config $(CONFIG))
 
 items:
 	@$(call run_and_log,items,$(UV) run python -m src.data.loader --config $(CONFIG))
@@ -48,10 +25,7 @@ validate:
 	@$(call run_and_log,validate,$(UV) run python -m src.data.validate --config $(CONFIG))
 
 infer:
-	@$(call run_and_log,infer,if [ "$$(UV_CACHE_DIR=$(UV_CACHE_DIR) $(UV) run python -c "import sys, logging; logging.disable(logging.CRITICAL); from src.schemas import ExperimentConfig; config = ExperimentConfig.from_yaml(sys.argv[1]); sys.stdout.write(config.inference.backend)" $(CONFIG))" = "blackjax" ]; then $(UV) run python -m src.models.irt_blackjax --config $(CONFIG); else $(UV) run python -m src.models.irt_numpyro --config $(CONFIG); fi)
-
-infer-blackjax:
-	@$(call run_and_log,infer_blackjax,$(UV) run python -m src.models.irt_blackjax --config $(CONFIG))
+	@$(call run_and_log,infer,$(UV) run python -m src.models.infer --config $(CONFIG))
 
 diagnostics:
 	@$(call run_and_log,diagnostics,$(UV) run python -m src.analysis.diagnostics --config $(CONFIG))

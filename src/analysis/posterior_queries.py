@@ -117,10 +117,11 @@ def main() -> None:
     config = ExperimentConfig.from_yaml(args.config)
     posterior_path = config.inference.posterior_path
     posterior = load_posterior(posterior_path)
+    backend = str(posterior.get("backend", "unknown"))
     logger.info(
         "loaded posterior from %s using backend=%s",
         posterior_path,
-        config.inference.backend,
+        backend,
     )
     if args.judge_a and args.judge_b:
         probability = probability_judge_a_exceeds_b(posterior, args.judge_a, args.judge_b)

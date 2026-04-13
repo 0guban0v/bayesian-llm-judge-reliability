@@ -175,6 +175,72 @@ def plot_item_parameter_scatter(
     return fig
 
 
+def ordered_source_ids(matrix: pl.DataFrame, posterior: dict[str, np.ndarray]) -> list[str]:
+    """Return source IDs ordered by observed item count, then posterior order."""
+
+    posterior_source_ids = [str(source_id) for source_id in posterior.get("source_ids", [])]
+    if not posterior_source_ids:
+        return []
+    posterior_index = {source_id: index for index, source_id in enumerate(posterior_source_ids)}
+    source_counts = (
+        matrix.group_by("source")
+        .len()
+        .rename({"len": "item_count"})
+        .sort(["item_count", "source"], descending=[True, False])
+    )
+    counts_map = {str(row["source"]): int(row["item_count"]) for row in source_counts.to_dicts()}
+    return sorted(
+        posterior_source_ids,
+        key=lambda source_id: (
+            -counts_map.get(source_id, 0),
+            posterior_index[source_id],
+        ),
+    )
+
+
+def top_source_ids(
+    matrix: pl.DataFrame,
+    posterior: dict[str, np.ndarray],
+    max_sources: int = 8,
+) -> list[str]:
+    """Return the most data-rich source IDs for small-multiple plotting."""
+
+    return ordered_source_ids(matrix, posterior)[:max_sources]
+
+
+def source_reliability_summary(
+    posterior: dict[str, np.ndarray],
+    ordered_sources: list[str],
+) -> pl.DataFrame:
+    """Return posterior means and intervals for judge reliability by source."""
+
+    if "theta_source" not in posterior or "source_ids" not in posterior:
+        raise ValueError("Posterior does not contain source-aware reliability samples.")
+    theta_source = posterior["theta_source"]
+    flattened = theta_source.reshape(-1, theta_source.shape[-2], theta_source.shape[-1])
+    judge_ids = [str(judge_id) for judge_id in posterior["judge_ids"].tolist()]
+    source_ids = [str(source_id) for source_id in posterior["source_ids"].tolist()]
+    source_index_map = {source_id: index for index, source_id in enumerate(source_ids)}
+    rows: list[dict[str, float | str]] = []
+    for source_id in ordered_sources:
+        source_index = source_index_map[source_id]
+        source_samples = flattened[:, :, source_index]
+        means = source_samples.mean(axis=0)
+        lowers = np.quantile(source_samples, 0.05, axis=0)
+        uppers = np.quantile(source_samples, 0.95, axis=0)
+        for judge_index, judge_id in enumerate(judge_ids):
+            rows.append(
+                {
+                    "source": source_id,
+                    "judge_id": judge_id,
+                    "theta_mean": float(means[judge_index]),
+                    "theta_p05": float(lowers[judge_index]),
+                    "theta_p95": float(uppers[judge_index]),
+                }
+            )
+    return pl.DataFrame(rows)
+
+
 def observed_accuracy(matrix: pl.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """Return judge IDs and observed accuracies from the processed matrix."""
 
@@ -255,6 +321,16 @@ def plot_posterior_predictive_check(
     ax.spines["left"].set_visible(False)
     ax.set_xlabel("")
     ax.set_title("Posterior Predictive Accuracy by Judge")
+    ax.text(
+        0.02,
+        0.98,
+        "circle = posterior predictive\nsquare = observed",
+        transform=ax.transAxes,
+        va="top",
+        ha="left",
+        fontsize=9,
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9, "pad": 3.0},
+    )
     style_axis(ax)
     model_handles = [
         Patch(
@@ -264,15 +340,11 @@ def plot_posterior_predictive_check(
         )
         for judge_id in ordered_judge_ids
     ]
-    style_legend = [
-        Line2D([], [], color="black", marker="o", linestyle="None", label="posterior predictive"),
-        Line2D([], [], color="black", marker="s", linestyle="None", label="observed"),
-    ]
     fig.legend(
         handles=model_handles,
         title="Judges",
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.06),
+        bbox_to_anchor=(0.5, 0.0),
         ncol=len(model_handles),
         frameon=False,
         fontsize=9,
@@ -280,17 +352,107 @@ def plot_posterior_predictive_check(
         handlelength=1.2,
         columnspacing=1.0,
     )
+    fig.tight_layout(rect=(0.0, 0.08, 1.0, 1.0))
+    return fig
+
+
+def plot_judge_reliability_by_source(
+    matrix: pl.DataFrame,
+    posterior: dict[str, np.ndarray],
+) -> plt.Figure:
+    """Plot source-specific judge reliability intervals as synchronized small multiples."""
+
+    ordered_sources = top_source_ids(matrix, posterior)
+    summary = source_reliability_summary(posterior, ordered_sources)
+    judge_ids = np.asarray(posterior["judge_ids"], dtype=str)
+    global_theta = flatten_draws(posterior["theta"]).mean(axis=0)
+    global_ordering = np.argsort(global_theta)[::-1]
+    ordered_judge_ids = [str(judge_ids[index]) for index in global_ordering]
+    color_map = judge_color_map(judge_ids)
+    global_means = {
+        str(judge_id): float(global_theta[index]) for index, judge_id in enumerate(judge_ids)
+    }
+    source_counts = matrix.group_by("source").len().rename({"len": "item_count"}).to_dicts()
+    counts_map = {str(row["source"]): int(row["item_count"]) for row in source_counts}
+    theta_min = float(summary.get_column("theta_p05").min())
+    theta_max = float(summary.get_column("theta_p95").max())
+    x_padding = max(0.1, 0.08 * (theta_max - theta_min))
+    y_positions = np.arange(len(ordered_judge_ids), dtype=float)
+    fig, axes = plt.subplots(4, 2, figsize=(12, 14), sharex=True, sharey=True)
+    axes_array = np.asarray(axes).reshape(-1)
+    for axis, source_id in zip(axes_array, ordered_sources, strict=False):
+        source_rows = summary.filter(pl.col("source") == source_id)
+        for y_position, judge_id in zip(y_positions, ordered_judge_ids, strict=False):
+            row = source_rows.filter(pl.col("judge_id") == judge_id)
+            mean = float(row.get_column("theta_mean").item())
+            lower = float(row.get_column("theta_p05").item())
+            upper = float(row.get_column("theta_p95").item())
+            color = color_map[judge_id]
+            axis.errorbar(
+                mean,
+                y_position,
+                xerr=np.asarray([[mean - lower], [upper - mean]]),
+                fmt="o",
+                color=color,
+                ecolor=color,
+                elinewidth=1.3,
+                capsize=2.5,
+                markersize=4.5,
+                zorder=3,
+            )
+            axis.scatter(
+                global_means[judge_id],
+                y_position,
+                marker="|",
+                color="#70757a",
+                s=120,
+                linewidths=1.1,
+                zorder=2,
+            )
+        axis.axvline(0.0, color="#9aa0a6", linewidth=1.0, linestyle="--", alpha=0.9, zorder=1)
+        axis.set_title(f"{source_id} (n={counts_map.get(source_id, 0)})", fontsize=10)
+        style_axis(axis)
+    for axis in axes_array[len(ordered_sources) :]:
+        axis.set_visible(False)
+    for axis in axes_array[::2]:
+        axis.set_yticks(y_positions)
+        axis.set_yticklabels(
+            [JUDGE_LABEL_PINS.get(judge_id, judge_id) for judge_id in ordered_judge_ids],
+            fontsize=9,
+        )
+    for axis in axes_array[1::2]:
+        axis.tick_params(axis="y", labelleft=False)
+    for axis in axes_array[-2:]:
+        if axis.get_visible():
+            axis.set_xlabel("Posterior reliability (theta)")
+    for axis in axes_array[: len(ordered_sources)]:
+        axis.set_xlim(theta_min - x_padding, theta_max + x_padding)
+        axis.set_ylim(len(ordered_judge_ids) - 0.5, -0.5)
+    fig.suptitle("Judge Reliability by Source", y=0.995, fontsize=13)
+    model_handles = [
+        Patch(
+            facecolor=color_map[judge_id],
+            edgecolor="none",
+            label=JUDGE_LABEL_PINS.get(judge_id, judge_id),
+        )
+        for judge_id in ordered_judge_ids
+    ]
+    model_handles.append(
+        Line2D([], [], color="#70757a", marker="|", linestyle="None", label="global mean")
+    )
     fig.legend(
-        handles=style_legend,
-        title="Marks",
+        handles=model_handles,
+        title="Judges",
         loc="lower center",
         bbox_to_anchor=(0.5, 0.0),
-        ncol=len(style_legend),
+        ncol=min(len(model_handles), 3),
         frameon=False,
         fontsize=9,
         title_fontsize=9,
+        handlelength=1.2,
+        columnspacing=1.0,
     )
-    fig.tight_layout(rect=(0.0, 0.14, 1.0, 1.0))
+    fig.tight_layout(rect=(0.0, 0.05, 1.0, 0.97))
     return fig
 
 
@@ -304,15 +466,15 @@ def main() -> None:
     posterior = load_posterior(posterior_path)
     matrix = pl.read_parquet(config.data.matrix_path)
     figures_dir = config.figures_dir
+    backend = str(posterior.get("backend", "unknown"))
     logger.info(
         "loaded posterior from %s using backend=%s",
         posterior_path,
-        config.inference.backend,
+        backend,
     )
     ridge_figure = plot_judge_reliability_ridge(posterior)
     figures_dir.mkdir(parents=True, exist_ok=True)
     ridge_figure.savefig(figures_dir / "judge_reliability_ridge.png", dpi=300, bbox_inches="tight")
-    ridge_figure.savefig(figures_dir / "hero.png", dpi=300, bbox_inches="tight")
     plt.close(ridge_figure)
     save_figure(
         plot_item_parameter_scatter(matrix, posterior),
@@ -322,6 +484,11 @@ def main() -> None:
         plot_posterior_predictive_check(matrix, posterior),
         figures_dir / "posterior_predictive",
     )
+    if "theta_source" in posterior and "source_ids" in posterior:
+        save_figure(
+            plot_judge_reliability_by_source(matrix, posterior),
+            figures_dir / "judge_reliability_by_source",
+        )
     logger.info("saved posterior figures to %s", figures_dir)
 
 
