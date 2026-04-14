@@ -40,7 +40,7 @@ class PyMCModelTests(unittest.TestCase):
     def test_run_mcmc_supports_source_hier_variant(self) -> None:
         config = self._make_config()
         config.model.variant = "source_hier"
-        config.model.priors.tau_theta = PriorConfig(loc=0.0, scale=0.5)
+        config.model.priors.tau_theta = PriorConfig(dist="lognormal", loc=0.0, scale=0.5)
 
         _, samples = run_mcmc(config, self._make_observations())
 
