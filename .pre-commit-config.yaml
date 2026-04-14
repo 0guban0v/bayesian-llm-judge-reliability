@@ -23,8 +23,8 @@ repos:
         stages: [pre-commit]
 
       - id: ban-disallowed-patterns
-        name: ban pandas pymc ipynb print
-        entry: bash -c '! rg -n "(import pandas|from pandas|import pymc|from pymc|\\.ipynb|print\\()" src tests notebooks scripts'
+        name: ban pandas ipynb print
+        entry: bash -c '! rg -n "(import pandas|from pandas|\\.ipynb|print\\()" src tests notebooks scripts'
         language: system
         pass_filenames: false
         stages: [pre-commit]
@@ -38,7 +38,7 @@ repos:
 
       - id: unit-tests
         name: unit tests
-        entry: bash -c 'MPLCONFIGDIR=.uv-cache/matplotlib uv run python -m unittest discover -s tests'
+        entry: ./scripts/with_cache_env.sh uv run python -m unittest discover -s tests
         language: system
         pass_filenames: false
         stages: [pre-push]

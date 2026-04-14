@@ -1,7 +1,13 @@
-"""Bayesian IRT model definitions."""
+"""Bayesian IRT model helpers and active PyMC backend."""
 
 from __future__ import annotations
 
-from src.models.irt_numpyro import irt_1pl, irt_2pl
+from src.models.irt_common import build_model_priors, load_matrix_observations
+from src.models.irt_pymc import run_and_save_posterior, run_mcmc
 
-__all__ = ["irt_1pl", "irt_2pl"]
+__all__ = [
+    "build_model_priors",
+    "load_matrix_observations",
+    "run_and_save_posterior",
+    "run_mcmc",
+]

@@ -11,10 +11,27 @@ def __():
     import marimo as mo
     import polars as pl
     from src.analysis.diagnostics import load_posterior
+    from src.analysis.figure_paths import (
+        JUDGE_RELIABILITY_BY_SOURCE_STEM,
+        JUDGE_RELIABILITY_RIDGE_STEM,
+        PRIOR_PREDICTIVE_STEM,
+        figure_png_path,
+    )
     from src.analysis.posterior_queries import rank_judges
     from src.schemas import ExperimentConfig
 
-    return ExperimentConfig, Path, load_posterior, mo, pl, rank_judges
+    return (
+        ExperimentConfig,
+        JUDGE_RELIABILITY_BY_SOURCE_STEM,
+        JUDGE_RELIABILITY_RIDGE_STEM,
+        PRIOR_PREDICTIVE_STEM,
+        Path,
+        figure_png_path,
+        load_posterior,
+        mo,
+        pl,
+        rank_judges,
+    )
 
 
 @app.cell
@@ -41,12 +58,23 @@ def __(intro, mo):
 
 
 @app.cell
-def __(Path, config, load_posterior, mo, pl, rank_judges):
+def __(
+    JUDGE_RELIABILITY_BY_SOURCE_STEM,
+    JUDGE_RELIABILITY_RIDGE_STEM,
+    PRIOR_PREDICTIVE_STEM,
+    config,
+    figure_png_path,
+    load_posterior,
+    mo,
+    pl,
+    rank_judges,
+):
     matrix_path = config.data.matrix_path
     posterior_path = config.inference.posterior_path
-    prior_path = Path("figures/prior_predictive_probabilities.png")
-    hero_path = Path("figures/judge_reliability_ridge.png")
-    source_figure_path = Path("figures/judge_reliability_by_source.png")
+    figures_dir = config.figures_dir
+    prior_path = figure_png_path(figures_dir, PRIOR_PREDICTIVE_STEM)
+    hero_path = figure_png_path(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM)
+    source_figure_path = figure_png_path(figures_dir, JUDGE_RELIABILITY_BY_SOURCE_STEM)
 
     matrix = pl.read_parquet(matrix_path) if matrix_path.exists() else None
     posterior = load_posterior(posterior_path) if posterior_path.exists() else None
