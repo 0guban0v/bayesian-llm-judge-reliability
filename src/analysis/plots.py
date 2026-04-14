@@ -96,6 +96,86 @@ def _fallback_judge_color(judge_id: str) -> str:
     return f"#{int(red * 255):02x}{int(green * 255):02x}{int(blue * 255):02x}"
 
 
+def sample_prior_predictive_probabilities(
+    matrix: pl.DataFrame,
+    config: ExperimentConfig,
+    *,
+    num_draws: int = 1000,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Sample prior predictive correctness probabilities and judge-average accuracies."""
+
+    priors = config.model.priors
+    rng = np.random.default_rng(config.experiment.seed)
+    n_items = matrix.height
+    n_judges = len(config.judges)
+    theta = rng.normal(priors.theta.loc, priors.theta.scale, size=(num_draws, n_judges))
+    b = rng.normal(priors.b.loc, priors.b.scale, size=(num_draws, n_items))
+    if config.model.type == "2PL":
+        a = rng.lognormal(priors.a.loc, priors.a.scale, size=(num_draws, n_items))
+    else:
+        a = np.ones((num_draws, n_items))
+    if config.model.variant == "source_hier":
+        if priors.tau_theta is None:
+            raise ValueError("source_hier prior predictive simulation requires tau_theta")
+        source_ids = (
+            matrix.get_column("source").cast(pl.String).unique(maintain_order=True).to_list()
+        )
+        source_lookup = {source_id: index for index, source_id in enumerate(source_ids)}
+        item_source_idx = np.asarray(
+            [source_lookup[source_id] for source_id in matrix.get_column("source").cast(pl.String)],
+            dtype=int,
+        )
+        tau_theta = rng.lognormal(
+            priors.tau_theta.loc,
+            priors.tau_theta.scale,
+            size=(num_draws, n_judges),
+        )
+        theta_source = rng.normal(
+            loc=theta[:, :, None],
+            scale=tau_theta[:, :, None],
+            size=(num_draws, n_judges, len(source_ids)),
+        )
+        theta_by_item = np.take(theta_source, item_source_idx, axis=2)
+        logits = a[:, None, :] * (theta_by_item - b[:, None, :])
+    else:
+        logits = a[:, None, :] * (theta[:, :, None] - b[:, None, :])
+    probabilities = 1.0 / (1.0 + np.exp(-logits))
+    return probabilities.reshape(-1), probabilities.mean(axis=2).reshape(-1)
+
+
+def plot_prior_predictive_probabilities(
+    matrix: pl.DataFrame,
+    config: ExperimentConfig,
+    *,
+    num_draws: int = 1000,
+) -> plt.Figure:
+    """Plot compact prior predictive summaries for probability scale calibration."""
+
+    probabilities, judge_means = sample_prior_predictive_probabilities(
+        matrix,
+        config,
+        num_draws=num_draws,
+    )
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
+    probability_axis, mean_axis = axes
+    probability_axis.hist(probabilities, bins=40, density=True, color="#5b6670", alpha=0.85)
+    probability_axis.axvline(0.05, color="#9aa0a6", linestyle="--", linewidth=1.0)
+    probability_axis.axvline(0.95, color="#9aa0a6", linestyle="--", linewidth=1.0)
+    probability_axis.set_xlabel("Prior predictive P(y=1)")
+    probability_axis.set_ylabel("Density")
+    probability_axis.set_title("Item-level probabilities")
+    style_axis(probability_axis)
+    mean_axis.hist(judge_means, bins=30, density=True, color="#0f4c81", alpha=0.85)
+    mean_axis.axvline(0.5, color="#9aa0a6", linestyle="--", linewidth=1.0)
+    mean_axis.set_xlabel("Prior predictive judge mean accuracy")
+    mean_axis.set_ylabel("Density")
+    mean_axis.set_title("Judge-level averages")
+    style_axis(mean_axis)
+    fig.suptitle("Prior Predictive Calibration", y=1.02)
+    fig.tight_layout()
+    return fig
+
+
 def plot_judge_reliability_ridge(posterior: dict[str, np.ndarray]) -> plt.Figure:
     """Plot stacked posterior densities for judge reliability."""
 
@@ -542,9 +622,21 @@ def main() -> None:
     args = parse_args()
     config = ExperimentConfig.from_yaml(args.config)
     posterior_path = config.inference.posterior_path
-    posterior = load_posterior(posterior_path)
     matrix = pl.read_parquet(config.data.matrix_path)
     figures_dir = config.figures_dir
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    save_figure(
+        plot_prior_predictive_probabilities(matrix, config),
+        figures_dir / "prior_predictive_probabilities",
+    )
+    if not posterior_path.exists():
+        logger.warning(
+            "posterior not found at %s; saved prior predictive figure only to %s",
+            posterior_path,
+            figures_dir,
+        )
+        return
+    posterior = load_posterior(posterior_path)
     backend = str(posterior.get("backend", "unknown"))
     logger.info(
         "loaded posterior from %s using backend=%s",
@@ -552,7 +644,6 @@ def main() -> None:
         backend,
     )
     ridge_figure = plot_judge_reliability_ridge(posterior)
-    figures_dir.mkdir(parents=True, exist_ok=True)
     ridge_figure.savefig(figures_dir / "judge_reliability_ridge.png", dpi=300, bbox_inches="tight")
     plt.close(ridge_figure)
     save_figure(
