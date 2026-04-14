@@ -221,15 +221,12 @@ def plot_prior_predictive_probabilities(
     probability_axis.axvline(0.95, color="#9aa0a6", linestyle="--", linewidth=1.0)
     probability_axis.set_xlabel("Prior predictive P(y=1)")
     probability_axis.set_ylabel("Density")
-    probability_axis.set_title("Item-level probabilities")
     style_axis(probability_axis)
     mean_axis.hist(judge_means, bins=30, density=True, color="#0f4c81", alpha=0.85)
     mean_axis.axvline(0.5, color="#9aa0a6", linestyle="--", linewidth=1.0)
     mean_axis.set_xlabel("Prior predictive judge mean accuracy")
     mean_axis.set_ylabel("Density")
-    mean_axis.set_title("Judge-level averages")
     style_axis(mean_axis)
-    fig.suptitle("Prior Predictive Calibration", y=1.02)
     fig.tight_layout()
     return fig
 
@@ -307,7 +304,6 @@ def plot_item_parameter_scatter(
     ax.scatter(b_mean, a_mean, alpha=0.8, color="#5b6670")
     ax.set_xlabel("Item difficulty mean (b)")
     ax.set_ylabel("Item discrimination mean (a)")
-    ax.set_title("Item Parameter Summary")
     style_axis(ax)
     fig.tight_layout()
     return fig
@@ -581,8 +577,6 @@ def plot_judge_reliability_by_source(
     global_means = {
         str(judge_id): float(global_theta[index]) for index, judge_id in enumerate(judge_ids)
     }
-    source_counts = matrix.group_by("source").len().rename({"len": "item_count"}).to_dicts()
-    counts_map = {str(row["source"]): int(row["item_count"]) for row in source_counts}
     theta_min = float(summary.get_column("theta_p05").min())
     theta_max = float(summary.get_column("theta_p95").max())
     x_padding = max(0.1, 0.08 * (theta_max - theta_min))
@@ -627,7 +621,6 @@ def plot_judge_reliability_by_source(
                 zorder=2,
             )
         axis.axvline(0.0, color="#9aa0a6", linewidth=1.0, linestyle="--", alpha=0.9, zorder=1)
-        axis.set_title(f"{source_id} (n={counts_map.get(source_id, 0)})", fontsize=10)
         axis.set_xlim(theta_min - x_padding, theta_max + x_padding)
         axis.set_ylim(len(ordered_judge_ids) - 0.5, -0.5)
         row_index, column_index = divmod(index, columns)
