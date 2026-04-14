@@ -19,6 +19,7 @@ from src.analysis.plots import (
     sample_prior_predictive_probabilities,
     source_color_map,
     source_reliability_summary,
+    stable_sigmoid,
     top_source_ids,
     validate_posterior_judge_order,
 )
@@ -102,6 +103,17 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         self.assertEqual(judge_means.shape, (40,))
         self.assertTrue(np.all(probabilities >= 0.0))
         self.assertTrue(np.all(probabilities <= 1.0))
+
+    def test_stable_sigmoid_handles_extreme_logits(self) -> None:
+        logits = np.asarray([-1_000.0, -50.0, 0.0, 50.0, 1_000.0])
+
+        probabilities = stable_sigmoid(logits)
+
+        self.assertTrue(np.all(np.isfinite(probabilities)))
+        self.assertTrue(np.all(probabilities >= 0.0))
+        self.assertTrue(np.all(probabilities <= 1.0))
+        self.assertLess(probabilities[0], 1e-10)
+        self.assertGreater(probabilities[-1], 1.0 - 1e-10)
 
     def test_returns_mean_probabilities_not_inverse_mean(self) -> None:
         matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s1"]})

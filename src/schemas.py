@@ -73,6 +73,7 @@ class JudgeConfig(BaseModel):
 class PriorConfig(BaseModel):
     """Location and scale parameters for a model prior."""
 
+    dist: Literal["normal", "lognormal"]
     loc: float
     scale: float = Field(gt=0.0)
 

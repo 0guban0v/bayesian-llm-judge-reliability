@@ -53,6 +53,18 @@ SOURCE_COLOR_PINS = {
 }
 
 
+def stable_sigmoid(values: np.ndarray) -> np.ndarray:
+    """Return a numerically stable logistic transform for arbitrary real inputs."""
+
+    positive_mask = values >= 0.0
+    negative_values = values[~positive_mask]
+    result = np.empty_like(values, dtype=float)
+    result[positive_mask] = 1.0 / (1.0 + np.exp(-values[positive_mask]))
+    exp_values = np.exp(negative_values)
+    result[~positive_mask] = exp_values / (1.0 + exp_values)
+    return result
+
+
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for plotting."""
 
@@ -148,7 +160,7 @@ def sample_prior_predictive_probabilities(
         logits = a[:, None, :] * (theta_by_item - b[:, None, :])
     else:
         logits = a[:, None, :] * (theta[:, :, None] - b[:, None, :])
-    probabilities = 1.0 / (1.0 + np.exp(-logits))
+    probabilities = stable_sigmoid(logits)
     return probabilities.reshape(-1), probabilities.mean(axis=2).reshape(-1)
 
 
@@ -435,7 +447,7 @@ def posterior_predictive_judge_accuracy(
     else:
         theta = flatten_draws(posterior["theta"])
         logits = a[:, None, :] * (theta[:, :, None] - b[:, None, :])
-    probabilities = 1.0 / (1.0 + np.exp(-logits))
+    probabilities = stable_sigmoid(logits)
     predictive_array = probabilities.mean(axis=2)
     return (
         predictive_array.mean(axis=0),

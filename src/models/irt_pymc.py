@@ -32,6 +32,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _sample_configured_prior(
+    name: str,
+    *,
+    dist_name: str,
+    loc: float,
+    scale: float,
+    dims: str | tuple[str, ...],
+) -> pm.TensorVariable:
+    """Sample a configured scalar/vector prior using the declared distribution family."""
+
+    if dist_name == "normal":
+        return pm.Normal(name, mu=loc, sigma=scale, dims=dims)
+    if dist_name == "lognormal":
+        return pm.LogNormal(name, mu=loc, sigma=scale, dims=dims)
+    raise ValueError(f"Unsupported prior distribution '{dist_name}' for {name}")
+
+
 def _build_model(config: ExperimentConfig, observations: dict[str, Any]) -> pm.Model:
     """Build a PyMC IRT model matching the configured type and variant."""
 
@@ -48,13 +65,26 @@ def _build_model(config: ExperimentConfig, observations: dict[str, Any]) -> pm.M
         judge_idx = pm.Data("judge_idx", observations["judge_idx"], dims="obs")
         item_idx = pm.Data("item_idx", observations["item_idx"], dims="obs")
         source_idx = pm.Data("source_idx", observations["source_idx"], dims="obs")
-        theta = pm.Normal("theta", mu=priors.theta.loc, sigma=priors.theta.scale, dims="judge")
-        b = pm.Normal("b", mu=priors.b.loc, sigma=priors.b.scale, dims="item")
+        theta = _sample_configured_prior(
+            "theta",
+            dist_name=priors.theta.dist,
+            loc=priors.theta.loc,
+            scale=priors.theta.scale,
+            dims="judge",
+        )
+        b = _sample_configured_prior(
+            "b",
+            dist_name=priors.b.dist,
+            loc=priors.b.loc,
+            scale=priors.b.scale,
+            dims="item",
+        )
         if config.model.variant == "source_hier":
-            tau_theta = pm.LogNormal(
+            tau_theta = _sample_configured_prior(
                 "tau_theta",
-                mu=priors.tau_theta.loc,
-                sigma=priors.tau_theta.scale,
+                dist_name=priors.tau_theta.dist,
+                loc=priors.tau_theta.loc,
+                scale=priors.tau_theta.scale,
                 dims="judge",
             )
             theta_source = pm.Normal(
@@ -67,7 +97,13 @@ def _build_model(config: ExperimentConfig, observations: dict[str, Any]) -> pm.M
         else:
             judge_term = theta[judge_idx]
         if config.model.type == "2PL":
-            a = pm.LogNormal("a", mu=priors.a.loc, sigma=priors.a.scale, dims="item")
+            a = _sample_configured_prior(
+                "a",
+                dist_name=priors.a.dist,
+                loc=priors.a.loc,
+                scale=priors.a.scale,
+                dims="item",
+            )
             logits = a[item_idx] * (judge_term - b[item_idx])
         else:
             logits = judge_term - b[item_idx]
