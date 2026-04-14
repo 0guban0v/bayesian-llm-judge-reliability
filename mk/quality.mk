@@ -20,12 +20,12 @@ quality:
 test:
 	@UV_CACHE_DIR=$(UV_CACHE_DIR) \
 		MPLCONFIGDIR=$(MPLCONFIGDIR) \
-		PYTENSOR_FLAGS=compiledir=$(PYTENSOR_COMPILEDIR) \
 		$(WITH_CACHE_ENV) $(UV) run python -m unittest discover -s tests
 
 pre-commit-install:
 	@$(UV) run pre-commit install --hook-type pre-commit --hook-type pre-push
 
 pre-commit-run:
-	@MPLCONFIGDIR=$(MPLCONFIGDIR) PYTENSOR_FLAGS=compiledir=$(PYTENSOR_COMPILEDIR) \
-		$(UV) run pre-commit run --all-files
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) \
+		MPLCONFIGDIR=$(MPLCONFIGDIR) \
+		$(WITH_CACHE_ENV) $(UV) run pre-commit run --all-files
