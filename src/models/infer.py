@@ -9,7 +9,7 @@ import polars as pl
 
 from src.data.validate import assert_complete_judge_coverage
 from src.logging_utils import configure_logging
-from src.models.irt_numpyro import run_and_save_posterior
+from src.models.irt_pymc import run_and_save_posterior
 from src.schemas import ExperimentConfig
 
 

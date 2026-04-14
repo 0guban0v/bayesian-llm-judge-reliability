@@ -18,10 +18,14 @@ quality:
 	@$(MAKE) dead-code
 
 test:
-	@MPLCONFIGDIR=.uv-cache/matplotlib $(UV) run python -m unittest discover -s tests
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) \
+		MPLCONFIGDIR=$(MPLCONFIGDIR) \
+		$(WITH_CACHE_ENV) $(UV) run python -m unittest discover -s tests
 
 pre-commit-install:
 	@$(UV) run pre-commit install --hook-type pre-commit --hook-type pre-push
 
 pre-commit-run:
-	@MPLCONFIGDIR=.uv-cache/matplotlib $(UV) run pre-commit run --all-files
+	@UV_CACHE_DIR=$(UV_CACHE_DIR) \
+		MPLCONFIGDIR=$(MPLCONFIGDIR) \
+		$(WITH_CACHE_ENV) $(UV) run pre-commit run --all-files

@@ -6,6 +6,9 @@ LIMIT ?=
 LOG_DIR ?= logs
 UV_CACHE_DIR ?= .uv-cache
 PROFILE_DIR ?= profiles
+MPLCONFIGDIR ?= $(UV_CACHE_DIR)/matplotlib
+PYTENSOR_COMPILEDIR ?= $(UV_CACHE_DIR)/pytensor
+WITH_CACHE_ENV ?= ./scripts/with_cache_env.sh
 
 export UV_PROJECT_ENVIRONMENT := .venv
 export UV_CACHE_DIR

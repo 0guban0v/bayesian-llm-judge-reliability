@@ -1,0 +1,115 @@
+"""Regression tests for PyMC IRT inference and archive shape."""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+import numpy as np
+from src.analysis.diagnostics import load_posterior
+from src.models.irt_common import save_posterior
+from src.models.irt_pymc import run_mcmc
+from src.schemas import ExperimentConfig, PriorConfig
+
+
+class PyMCModelTests(unittest.TestCase):
+    """Verify the PyMC backend returns arrays compatible with downstream consumers."""
+
+    def _make_config(self) -> ExperimentConfig:
+        config = ExperimentConfig.from_yaml("configs/experiment.yaml").model_copy(deep=True)
+        config.inference.num_warmup = 2
+        config.inference.num_samples = 4
+        config.inference.num_chains = 1
+        return config
+
+    def _make_observations(self) -> dict[str, np.ndarray | int]:
+        return {
+            "correct": np.asarray([1, 0, 1, 0], dtype=np.int32),
+            "judge_idx": np.asarray([0, 0, 1, 1], dtype=np.int32),
+            "item_idx": np.asarray([0, 1, 0, 1], dtype=np.int32),
+            "source_idx": np.asarray([0, 1, 0, 1], dtype=np.int32),
+            "n_judges": 2,
+            "n_items": 2,
+            "n_sources": 2,
+            "judge_ids": np.asarray(["judge-a", "judge-b"]),
+            "item_ids": np.asarray(["item-1", "item-2"]),
+            "source_ids": np.asarray(["source-a", "source-b"]),
+        }
+
+    def test_run_mcmc_supports_source_hier_variant(self) -> None:
+        config = self._make_config()
+        config.model.variant = "source_hier"
+        config.model.priors.tau_theta = PriorConfig(dist="lognormal", loc=0.0, scale=0.5)
+
+        _, samples = run_mcmc(config, self._make_observations())
+
+        self.assertIn("theta", samples)
+        self.assertIn("tau_theta", samples)
+        self.assertIn("theta_source", samples)
+        self.assertEqual(samples["theta"].ndim, 3)
+        self.assertEqual(samples["theta_source"].ndim, 4)
+        self.assertEqual(samples["diverging"].ndim, 2)
+
+    def test_run_mcmc_omits_2pl_and_hierarchical_terms_for_1pl_global(self) -> None:
+        config = self._make_config()
+        config.model.type = "1PL"
+        config.model.variant = "global"
+        config.model.priors.tau_theta = None
+
+        _, samples = run_mcmc(config, self._make_observations())
+
+        self.assertIn("theta", samples)
+        self.assertIn("b", samples)
+        self.assertNotIn("a", samples)
+        self.assertNotIn("tau_theta", samples)
+        self.assertNotIn("theta_source", samples)
+        self.assertEqual(samples["theta"].shape[:2], (1, 4))
+
+    def test_saved_archive_round_trips_with_expected_metadata(self) -> None:
+        config = self._make_config()
+        observations = self._make_observations()
+
+        _, samples = run_mcmc(config, observations)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            posterior_path = Path(temp_dir) / "posterior.npz"
+            save_posterior(
+                posterior_path,
+                samples,
+                observations,
+                config.model.type,
+                metadata={
+                    "backend": np.asarray("pymc"),
+                    "experiment_seed": np.asarray(config.experiment.seed),
+                    "num_chains": np.asarray(samples["theta"].shape[0]),
+                },
+            )
+            posterior = load_posterior(posterior_path)
+
+        for key in (
+            "backend",
+            "judge_ids",
+            "item_ids",
+            "source_ids",
+            "model_type",
+            "n_obs",
+            "experiment_seed",
+            "num_chains",
+            "diverging",
+            "theta",
+            "b",
+            "a",
+            "tau_theta",
+            "theta_source",
+        ):
+            self.assertIn(key, posterior)
+        self.assertEqual(str(posterior["backend"]), "pymc")
+        self.assertEqual(int(posterior["num_chains"]), samples["theta"].shape[0])
+        self.assertEqual(int(posterior["n_obs"]), len(observations["correct"]))
+        self.assertEqual(posterior["theta"].shape[:2], samples["theta"].shape[:2])
+        self.assertEqual(posterior["theta_source"].shape[:2], samples["theta_source"].shape[:2])
+
+
+if __name__ == "__main__":
+    unittest.main()

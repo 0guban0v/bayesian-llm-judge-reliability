@@ -8,11 +8,12 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
-from src.models.irt_numpyro import (
+from src.models.irt_common import (
+    build_model_priors,
     load_matrix_observations,
-    run_mcmc,
     summarize_item_parameters,
 )
+from src.models.irt_pymc import run_mcmc
 from src.schemas import ExperimentConfig, PriorConfig
 
 
@@ -76,7 +77,7 @@ class SummarizeItemParametersTests(unittest.TestCase):
 
 
 class SourceHierModelTests(unittest.TestCase):
-    """Verify the source-aware hierarchical variant runs and returns new parameters."""
+    """Verify the source-aware hierarchical PyMC variant runs and returns new parameters."""
 
     def test_run_mcmc_supports_source_hier_variant(self) -> None:
         config = ExperimentConfig.from_yaml("configs/experiment.yaml").model_copy(deep=True)
@@ -103,6 +104,21 @@ class SourceHierModelTests(unittest.TestCase):
         self.assertIn("theta", samples)
         self.assertIn("tau_theta", samples)
         self.assertIn("theta_source", samples)
+
+
+class BuildModelPriorsTests(unittest.TestCase):
+    """Verify configured prior distribution families are preserved."""
+
+    def test_build_model_priors_preserves_distribution_names(self) -> None:
+        config = ExperimentConfig.from_yaml("configs/experiment.yaml")
+
+        priors = build_model_priors(config.model)
+
+        self.assertEqual(priors.theta.dist, "normal")
+        self.assertEqual(priors.b.dist, "normal")
+        self.assertEqual(priors.a.dist, "lognormal")
+        self.assertIsNotNone(priors.tau_theta)
+        self.assertEqual(priors.tau_theta.dist, "lognormal")
 
 
 if __name__ == "__main__":
