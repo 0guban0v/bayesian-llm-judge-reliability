@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from src.schemas import ExperimentConfig, InferenceConfig
+from src.schemas import ExperimentConfig, InferenceConfig, PriorConfig
 
 
 class InferenceConfigTests(unittest.TestCase):
@@ -38,6 +38,15 @@ class InferenceConfigTests(unittest.TestCase):
         self.assertTrue(config.inference.output_dir.is_absolute())
         self.assertEqual(config.figures_dir, Path.cwd() / "figures")
         self.assertEqual(config.report_dir, Path.cwd() / "report")
+
+    def test_prior_config_requires_declared_distribution(self) -> None:
+        config = PriorConfig(dist="normal", loc=0.0, scale=1.0)
+
+        self.assertEqual(config.dist, "normal")
+
+    def test_prior_config_rejects_unknown_distribution(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Input should be 'normal' or 'lognormal'"):
+            PriorConfig(dist="gamma", loc=0.0, scale=1.0)
 
 
 if __name__ == "__main__":

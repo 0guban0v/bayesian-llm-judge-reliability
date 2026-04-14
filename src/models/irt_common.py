@@ -17,6 +17,7 @@ from src.schemas import IRTConfig
 class PriorSpec:
     """Concrete prior parameters for a single latent variable."""
 
+    dist: str
     loc: float
     scale: float
 
@@ -36,19 +37,23 @@ def build_model_priors(model_config: IRTConfig) -> ModelPriors:
 
     return ModelPriors(
         theta=PriorSpec(
+            dist=model_config.priors.theta.dist,
             loc=model_config.priors.theta.loc,
             scale=model_config.priors.theta.scale,
         ),
         b=PriorSpec(
+            dist=model_config.priors.b.dist,
             loc=model_config.priors.b.loc,
             scale=model_config.priors.b.scale,
         ),
         a=PriorSpec(
+            dist=model_config.priors.a.dist,
             loc=model_config.priors.a.loc,
             scale=model_config.priors.a.scale,
         ),
         tau_theta=(
             PriorSpec(
+                dist=model_config.priors.tau_theta.dist,
                 loc=model_config.priors.tau_theta.loc,
                 scale=model_config.priors.tau_theta.scale,
             )

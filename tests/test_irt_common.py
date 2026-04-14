@@ -8,7 +8,11 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
-from src.models.irt_common import load_matrix_observations, summarize_item_parameters
+from src.models.irt_common import (
+    build_model_priors,
+    load_matrix_observations,
+    summarize_item_parameters,
+)
 from src.models.irt_pymc import run_mcmc
 from src.schemas import ExperimentConfig, PriorConfig
 
@@ -81,7 +85,7 @@ class SourceHierModelTests(unittest.TestCase):
         config.inference.num_samples = 4
         config.inference.num_chains = 1
         config.model.variant = "source_hier"
-        config.model.priors.tau_theta = PriorConfig(loc=0.0, scale=0.5)
+        config.model.priors.tau_theta = PriorConfig(dist="lognormal", loc=0.0, scale=0.5)
         observations = {
             "correct": np.asarray([1, 0, 1, 0], dtype=np.int32),
             "judge_idx": np.asarray([0, 0, 1, 1], dtype=np.int32),
@@ -100,6 +104,21 @@ class SourceHierModelTests(unittest.TestCase):
         self.assertIn("theta", samples)
         self.assertIn("tau_theta", samples)
         self.assertIn("theta_source", samples)
+
+
+class BuildModelPriorsTests(unittest.TestCase):
+    """Verify configured prior distribution families are preserved."""
+
+    def test_build_model_priors_preserves_distribution_names(self) -> None:
+        config = ExperimentConfig.from_yaml("configs/experiment.yaml")
+
+        priors = build_model_priors(config.model)
+
+        self.assertEqual(priors.theta.dist, "normal")
+        self.assertEqual(priors.b.dist, "normal")
+        self.assertEqual(priors.a.dist, "lognormal")
+        self.assertIsNotNone(priors.tau_theta)
+        self.assertEqual(priors.tau_theta.dist, "lognormal")
 
 
 if __name__ == "__main__":
