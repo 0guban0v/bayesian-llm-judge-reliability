@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
@@ -13,7 +14,9 @@ from src.analysis.plots import (
     ordered_source_ids,
     plot_judge_reliability_by_source,
     plot_posterior_predictive_check,
+    plot_prior_predictive_probabilities,
     posterior_predictive_judge_accuracy,
+    sample_prior_predictive_probabilities,
     source_color_map,
     source_reliability_summary,
     top_source_ids,
@@ -21,8 +24,84 @@ from src.analysis.plots import (
 )
 
 
+def make_plot_config(*, model_type: str = "2PL", variant: str = "source_hier") -> SimpleNamespace:
+    """Return a minimal config namespace for plot helper tests."""
+
+    return SimpleNamespace(
+        experiment=SimpleNamespace(seed=7),
+        judges=[SimpleNamespace(id="judge-a"), SimpleNamespace(id="judge-b")],
+        model=SimpleNamespace(
+            type=model_type,
+            variant=variant,
+            priors=SimpleNamespace(
+                theta=SimpleNamespace(loc=0.0, scale=1.0),
+                b=SimpleNamespace(loc=0.0, scale=2.0),
+                a=SimpleNamespace(loc=0.0, scale=0.5),
+                tau_theta=SimpleNamespace(loc=0.0, scale=0.5),
+            ),
+        ),
+    )
+
+
 class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
     """Verify posterior predictive judge accuracy stays on the probability scale."""
+
+    def test_prior_predictive_sampling_returns_probability_scale_outputs(self) -> None:
+        matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
+        config = make_plot_config()
+
+        probabilities, judge_means = sample_prior_predictive_probabilities(
+            matrix,
+            config,
+            num_draws=20,
+        )
+
+        self.assertEqual(probabilities.shape, (80,))
+        self.assertEqual(judge_means.shape, (40,))
+        self.assertTrue(np.all(probabilities >= 0.0))
+        self.assertTrue(np.all(probabilities <= 1.0))
+        self.assertTrue(np.all(judge_means >= 0.0))
+        self.assertTrue(np.all(judge_means <= 1.0))
+
+    def test_plot_prior_predictive_probabilities_returns_two_panel_figure(self) -> None:
+        matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
+        config = make_plot_config()
+
+        figure = plot_prior_predictive_probabilities(matrix, config, num_draws=20)
+
+        self.assertEqual(len(figure.axes), 2)
+        self.assertEqual(figure.axes[0].get_xlabel(), "Prior predictive P(y=1)")
+        self.assertEqual(figure.axes[1].get_xlabel(), "Prior predictive judge mean accuracy")
+
+    def test_prior_predictive_sampling_supports_global_variant(self) -> None:
+        matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
+        config = make_plot_config(variant="global")
+
+        probabilities, judge_means = sample_prior_predictive_probabilities(
+            matrix,
+            config,
+            num_draws=20,
+        )
+
+        self.assertEqual(probabilities.shape, (80,))
+        self.assertEqual(judge_means.shape, (40,))
+        self.assertTrue(np.all(probabilities >= 0.0))
+        self.assertTrue(np.all(probabilities <= 1.0))
+
+    def test_prior_predictive_sampling_supports_1pl_without_discrimination_draws(self) -> None:
+        matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
+        config = make_plot_config(model_type="1PL", variant="global")
+
+        probabilities, judge_means = sample_prior_predictive_probabilities(
+            matrix,
+            config,
+            num_draws=20,
+        )
+
+        self.assertEqual(probabilities.shape, (80,))
+        self.assertEqual(judge_means.shape, (40,))
+        self.assertTrue(np.all(probabilities >= 0.0))
+        self.assertTrue(np.all(probabilities <= 1.0))
 
     def test_returns_mean_probabilities_not_inverse_mean(self) -> None:
         matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s1"]})
