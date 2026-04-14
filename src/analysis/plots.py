@@ -15,6 +15,15 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from src.analysis.diagnostics import flatten_draws, load_posterior
+from src.analysis.figure_paths import (
+    ITEM_PARAMETER_SCATTER_STEM,
+    JUDGE_RELIABILITY_BY_SOURCE_STEM,
+    JUDGE_RELIABILITY_RIDGE_STEM,
+    POSTERIOR_PREDICTIVE_STEM,
+    PRIOR_PREDICTIVE_STEM,
+    figure_base_path,
+    figure_png_path,
+)
 from src.data.loader import ITEM_METADATA_COLUMNS
 from src.logging_utils import configure_logging
 from src.schemas import ExperimentConfig
@@ -468,7 +477,6 @@ def plot_posterior_predictive_check(
     ax.set_yticks([])
     ax.spines["left"].set_visible(False)
     ax.set_xlabel("")
-    ax.set_title("Posterior Predictive Accuracy by Judge")
     ax.text(
         0.02,
         0.98,
@@ -587,7 +595,6 @@ def plot_judge_reliability_by_source(
         style_axis(axis)
     for axis in axes_array[len(ordered_sources) :]:
         axis.set_visible(False)
-    fig.suptitle("Judge Reliability by Source", y=0.995, fontsize=13)
     model_handles = [
         Patch(
             facecolor=color_map[judge_id],
@@ -611,7 +618,7 @@ def plot_judge_reliability_by_source(
         handlelength=1.2,
         columnspacing=1.0,
     )
-    fig.tight_layout(rect=(0.0, 0.05, 1.0, 0.97))
+    fig.tight_layout(rect=(0.0, 0.05, 1.0, 1.0))
     return fig
 
 
@@ -627,7 +634,7 @@ def main() -> None:
     figures_dir.mkdir(parents=True, exist_ok=True)
     save_figure(
         plot_prior_predictive_probabilities(matrix, config),
-        figures_dir / "prior_predictive_probabilities",
+        figure_base_path(figures_dir, PRIOR_PREDICTIVE_STEM),
     )
     if not posterior_path.exists():
         logger.warning(
@@ -644,20 +651,24 @@ def main() -> None:
         backend,
     )
     ridge_figure = plot_judge_reliability_ridge(posterior)
-    ridge_figure.savefig(figures_dir / "judge_reliability_ridge.png", dpi=300, bbox_inches="tight")
+    ridge_figure.savefig(
+        figure_png_path(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM),
+        dpi=300,
+        bbox_inches="tight",
+    )
     plt.close(ridge_figure)
     save_figure(
         plot_item_parameter_scatter(matrix, posterior),
-        figures_dir / "item_parameter_scatter",
+        figure_base_path(figures_dir, ITEM_PARAMETER_SCATTER_STEM),
     )
     save_figure(
         plot_posterior_predictive_check(matrix, posterior),
-        figures_dir / "posterior_predictive",
+        figure_base_path(figures_dir, POSTERIOR_PREDICTIVE_STEM),
     )
     if "theta_source" in posterior and "source_ids" in posterior:
         save_figure(
             plot_judge_reliability_by_source(matrix, posterior),
-            figures_dir / "judge_reliability_by_source",
+            figure_base_path(figures_dir, JUDGE_RELIABILITY_BY_SOURCE_STEM),
         )
     logger.info("saved posterior figures to %s", figures_dir)
 

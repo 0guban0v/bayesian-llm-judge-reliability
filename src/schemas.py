@@ -71,9 +71,8 @@ class JudgeConfig(BaseModel):
 
 
 class PriorConfig(BaseModel):
-    """Distribution specification for a model prior."""
+    """Location and scale parameters for a model prior."""
 
-    dist: Literal["normal", "lognormal"]
     loc: float
     scale: float = Field(gt=0.0)
 
@@ -96,7 +95,7 @@ class IRTConfig(BaseModel):
 
 
 class InferenceConfig(BaseModel):
-    """Inference hyperparameters for NumPyro NUTS."""
+    """Inference hyperparameters for NUTS sampling."""
 
     sampler: Literal["NUTS"]
     num_warmup: int = Field(gt=0)

@@ -8,11 +8,8 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
-from src.models.irt_numpyro import (
-    load_matrix_observations,
-    run_mcmc,
-    summarize_item_parameters,
-)
+from src.models.irt_common import load_matrix_observations, summarize_item_parameters
+from src.models.irt_pymc import run_mcmc
 from src.schemas import ExperimentConfig, PriorConfig
 
 
@@ -76,7 +73,7 @@ class SummarizeItemParametersTests(unittest.TestCase):
 
 
 class SourceHierModelTests(unittest.TestCase):
-    """Verify the source-aware hierarchical variant runs and returns new parameters."""
+    """Verify the source-aware hierarchical PyMC variant runs and returns new parameters."""
 
     def test_run_mcmc_supports_source_hier_variant(self) -> None:
         config = ExperimentConfig.from_yaml("configs/experiment.yaml").model_copy(deep=True)
@@ -84,7 +81,7 @@ class SourceHierModelTests(unittest.TestCase):
         config.inference.num_samples = 4
         config.inference.num_chains = 1
         config.model.variant = "source_hier"
-        config.model.priors.tau_theta = PriorConfig(dist="lognormal", loc=0.0, scale=0.5)
+        config.model.priors.tau_theta = PriorConfig(loc=0.0, scale=0.5)
         observations = {
             "correct": np.asarray([1, 0, 1, 0], dtype=np.int32),
             "judge_idx": np.asarray([0, 0, 1, 1], dtype=np.int32),
