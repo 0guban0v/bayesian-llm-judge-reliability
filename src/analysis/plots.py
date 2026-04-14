@@ -65,6 +65,23 @@ def stable_sigmoid(values: np.ndarray) -> np.ndarray:
     return result
 
 
+def sample_configured_prior(
+    *,
+    rng: np.random.Generator,
+    dist_name: str,
+    loc: float,
+    scale: float,
+    size: tuple[int, ...],
+) -> np.ndarray:
+    """Draw prior samples from the configured distribution family."""
+
+    if dist_name == "normal":
+        return rng.normal(loc, scale, size=size)
+    if dist_name == "lognormal":
+        return rng.lognormal(loc, scale, size=size)
+    raise ValueError(f"Unsupported prior distribution '{dist_name}' for prior predictive draw")
+
+
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for plotting."""
 
@@ -129,10 +146,28 @@ def sample_prior_predictive_probabilities(
     rng = np.random.default_rng(config.experiment.seed)
     n_items = matrix.height
     n_judges = len(config.judges)
-    theta = rng.normal(priors.theta.loc, priors.theta.scale, size=(num_draws, n_judges))
-    b = rng.normal(priors.b.loc, priors.b.scale, size=(num_draws, n_items))
+    theta = sample_configured_prior(
+        rng=rng,
+        dist_name=priors.theta.dist,
+        loc=priors.theta.loc,
+        scale=priors.theta.scale,
+        size=(num_draws, n_judges),
+    )
+    b = sample_configured_prior(
+        rng=rng,
+        dist_name=priors.b.dist,
+        loc=priors.b.loc,
+        scale=priors.b.scale,
+        size=(num_draws, n_items),
+    )
     if config.model.type == "2PL":
-        a = rng.lognormal(priors.a.loc, priors.a.scale, size=(num_draws, n_items))
+        a = sample_configured_prior(
+            rng=rng,
+            dist_name=priors.a.dist,
+            loc=priors.a.loc,
+            scale=priors.a.scale,
+            size=(num_draws, n_items),
+        )
     else:
         a = np.ones((num_draws, n_items))
     if config.model.variant == "source_hier":
@@ -146,9 +181,11 @@ def sample_prior_predictive_probabilities(
             [source_lookup[source_id] for source_id in matrix.get_column("source").cast(pl.String)],
             dtype=int,
         )
-        tau_theta = rng.lognormal(
-            priors.tau_theta.loc,
-            priors.tau_theta.scale,
+        tau_theta = sample_configured_prior(
+            rng=rng,
+            dist_name=priors.tau_theta.dist,
+            loc=priors.tau_theta.loc,
+            scale=priors.tau_theta.scale,
             size=(num_draws, n_judges),
         )
         theta_source = rng.normal(

@@ -35,10 +35,10 @@ def make_plot_config(*, model_type: str = "2PL", variant: str = "source_hier") -
             type=model_type,
             variant=variant,
             priors=SimpleNamespace(
-                theta=SimpleNamespace(loc=0.0, scale=1.0),
-                b=SimpleNamespace(loc=0.0, scale=2.0),
-                a=SimpleNamespace(loc=0.0, scale=0.5),
-                tau_theta=SimpleNamespace(loc=0.0, scale=0.5),
+                theta=SimpleNamespace(dist="normal", loc=0.0, scale=1.0),
+                b=SimpleNamespace(dist="normal", loc=0.0, scale=2.0),
+                a=SimpleNamespace(dist="lognormal", loc=0.0, scale=0.5),
+                tau_theta=SimpleNamespace(dist="lognormal", loc=0.0, scale=0.5),
             ),
         ),
     )
@@ -103,6 +103,23 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         self.assertEqual(judge_means.shape, (40,))
         self.assertTrue(np.all(probabilities >= 0.0))
         self.assertTrue(np.all(probabilities <= 1.0))
+
+    def test_prior_predictive_sampling_honors_configured_prior_families(self) -> None:
+        matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
+        config = make_plot_config(variant="global")
+        config.model.priors.theta.dist = "lognormal"
+        config.model.priors.b.dist = "lognormal"
+
+        probabilities, judge_means = sample_prior_predictive_probabilities(
+            matrix,
+            config,
+            num_draws=20,
+        )
+
+        self.assertEqual(probabilities.shape, (80,))
+        self.assertEqual(judge_means.shape, (40,))
+        self.assertTrue(np.all(np.isfinite(probabilities)))
+        self.assertTrue(np.all(np.isfinite(judge_means)))
 
     def test_stable_sigmoid_handles_extreme_logits(self) -> None:
         logits = np.asarray([-1_000.0, -50.0, 0.0, 50.0, 1_000.0])
