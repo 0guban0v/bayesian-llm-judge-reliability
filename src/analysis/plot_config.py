@@ -6,8 +6,12 @@ import colorsys
 import hashlib
 
 import numpy as np
+from matplotlib.axes import Axes
 
 EXPORT_DPI = 600
+
+FONT_SIZE_TICK: float = 9.0
+FONT_SIZE_ANNOTATION: float = 8.5
 
 JUDGE_COLOR_PINS = {
     "deepseek-r1-distill-qwen-14b": "#0f4c81",
@@ -58,7 +62,7 @@ def source_display_label(source_id: str) -> str:
     return source_id.replace("-", " ")
 
 
-def style_axis(ax: object) -> None:
+def style_axis(ax: Axes) -> None:
     """Remove unused frame lines and keep a cleaner plotting surface."""
 
     ax.spines["top"].set_visible(False)
