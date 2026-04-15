@@ -14,25 +14,21 @@ def _():
     import polars as pl
     from src.analysis.diagnostics import load_posterior
     from src.analysis.figure_paths import (
-        ITEM_PARAMETER_SCATTER_STEM,
         JUDGE_RELIABILITY_BY_SOURCE_STEM,
         JUDGE_RELIABILITY_RIDGE_STEM,
-        POSTERIOR_PREDICTIVE_STEM,
         PRIOR_PREDICTIVE_STEM,
-        figure_png_path,
+        figure_base_path,
     )
     from src.analysis.posterior_queries import rank_judges
     from src.schemas import ExperimentConfig
 
     return (
         ExperimentConfig,
-        ITEM_PARAMETER_SCATTER_STEM,
         JUDGE_RELIABILITY_BY_SOURCE_STEM,
         JUDGE_RELIABILITY_RIDGE_STEM,
         Path,
-        POSTERIOR_PREDICTIVE_STEM,
         PRIOR_PREDICTIVE_STEM,
-        figure_png_path,
+        figure_base_path,
         load_posterior,
         mo,
         pl,
@@ -97,13 +93,11 @@ def _(config, mo, refresh_button, subprocess, sys):
 
 @app.cell
 def _(
-    ITEM_PARAMETER_SCATTER_STEM,
     JUDGE_RELIABILITY_BY_SOURCE_STEM,
     JUDGE_RELIABILITY_RIDGE_STEM,
-    POSTERIOR_PREDICTIVE_STEM,
     PRIOR_PREDICTIVE_STEM,
     config,
-    figure_png_path,
+    figure_base_path,
     load_posterior,
     mo,
     pl,
@@ -112,11 +106,12 @@ def _(
     matrix_path = config.data.matrix_path
     posterior_path = config.inference.posterior_path
     figures_dir = config.figures_dir
-    prior_path = figure_png_path(figures_dir, PRIOR_PREDICTIVE_STEM)
-    ridge_path = figure_png_path(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM)
-    ppc_path = figure_png_path(figures_dir, POSTERIOR_PREDICTIVE_STEM)
-    item_path = figure_png_path(figures_dir, ITEM_PARAMETER_SCATTER_STEM)
-    source_figure_path = figure_png_path(figures_dir, JUDGE_RELIABILITY_BY_SOURCE_STEM)
+    prior_path = figure_base_path(figures_dir, PRIOR_PREDICTIVE_STEM).with_suffix(".png")
+    ridge_path = figure_base_path(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM).with_suffix(".png")
+    source_figure_path = figure_base_path(
+        figures_dir,
+        JUDGE_RELIABILITY_BY_SOURCE_STEM,
+    ).with_suffix(".png")
 
     matrix = pl.read_parquet(matrix_path) if matrix_path.exists() else None
     posterior = load_posterior(posterior_path) if posterior_path.exists() else None
@@ -132,16 +127,12 @@ def _(
         - Posterior backend: `{posterior_backend or "n/a"}`
         - Prior predictive figure: `{"present" if prior_path.exists() else "missing"}`
         - Judge reliability figure: `{"present" if ridge_path.exists() else "missing"}`
-        - Posterior predictive figure: `{"present" if ppc_path.exists() else "missing"}`
-        - Item parameter figure: `{"present" if item_path.exists() else "missing"}`
         - Source-aware figure: `{"present" if source_figure_path.exists() else "missing"}`
         """
     )
     return (
-        item_path,
         matrix,
         posterior,
-        ppc_path,
         prior_path,
         ranking,
         ridge_path,
@@ -185,32 +176,6 @@ def _(image_panel, mo, ridge_path):
 
 
 @app.cell
-def _(image_panel, mo, ppc_path):
-    if ppc_path.exists():
-        ppc_panel = image_panel("Posterior Predictive Figure", ppc_path)
-    else:
-        ppc_panel = mo.md(
-            "## Posterior Predictive Figure\n"
-            "Run `uv run python -m src.analysis.plots --config configs/experiment.yaml` "
-            "to create it."
-        )
-    return (ppc_panel,)
-
-
-@app.cell
-def _(image_panel, item_path, mo):
-    if item_path.exists():
-        item_panel = image_panel("Item Parameter Figure", item_path)
-    else:
-        item_panel = mo.md(
-            "## Item Parameter Figure\n"
-            "Run `uv run python -m src.analysis.plots --config configs/experiment.yaml` "
-            "to create it."
-        )
-    return (item_panel,)
-
-
-@app.cell
 def _(image_panel, mo, source_figure_path):
     if source_figure_path.exists():
         source_panel = image_panel("Source-Aware Figure", source_figure_path)
@@ -238,9 +203,7 @@ def _(matrix, mo, ranking):
 @app.cell
 def _(
     intro,
-    item_panel,
     mo,
-    ppc_panel,
     prior_panel,
     refresh_button,
     refresh_status,
@@ -256,8 +219,6 @@ def _(
             status,
             prior_panel,
             ridge_panel,
-            ppc_panel,
-            item_panel,
             source_panel,
         ]
     )
