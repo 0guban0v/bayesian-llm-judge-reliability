@@ -14,6 +14,7 @@ profiles/
 .uv-cache/
 .ruff_cache/
 .mypy_cache/
+notebooks/__marimo__/
 
 logs/*.log
 archive/logs/*.log

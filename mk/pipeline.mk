@@ -34,7 +34,7 @@ plots:
 	@$(call run_and_log,plots,$(UV) run python -m src.analysis.plots --config $(CONFIG))
 
 notebook:
-	@$(call run_and_log,notebook,$(UV) run marimo edit notebooks/results.py)
+	@$(UV) run marimo edit notebooks/results.py
 
 full:
 	@$(MAKE) items CONFIG=$(CONFIG)

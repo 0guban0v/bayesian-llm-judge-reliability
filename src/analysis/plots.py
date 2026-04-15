@@ -3,54 +3,33 @@
 from __future__ import annotations
 
 import argparse
-import colorsys
-import hashlib
 import logging
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 from src.analysis.diagnostics import flatten_draws, load_posterior
 from src.analysis.figure_paths import (
-    ITEM_PARAMETER_SCATTER_STEM,
     JUDGE_RELIABILITY_BY_SOURCE_STEM,
     JUDGE_RELIABILITY_RIDGE_STEM,
-    POSTERIOR_PREDICTIVE_STEM,
     PRIOR_PREDICTIVE_STEM,
     figure_base_path,
-    figure_png_path,
+)
+from src.analysis.plot_config import (
+    EXPORT_DPI,
+    JUDGE_LABEL_PINS,
+    judge_color_map,
+    source_display_label,
+    style_axis,
 )
 from src.data.loader import ITEM_METADATA_COLUMNS
 from src.logging_utils import configure_logging
 from src.schemas import ExperimentConfig
 
 logger = logging.getLogger(__name__)
-
-JUDGE_COLOR_PINS = {
-    "deepseek-r1-distill-qwen-14b": "#0f4c81",
-    "deepseek-r1-distill-qwen-7b": "#c44e52",
-    "mistral-7b-instruct-v0-3": "#d95f02",
-    "qwen2-5-7b-instruct": "#4daf4a",
-    "gemma-2-9b-it": "#984ea3",
-}
-JUDGE_LABEL_PINS = {
-    "deepseek-r1-distill-qwen-14b": "DeepSeek 14B",
-    "deepseek-r1-distill-qwen-7b": "DeepSeek 7B",
-    "mistral-7b-instruct-v0-3": "Mistral 7B",
-    "qwen2-5-7b-instruct": "Qwen 7B",
-    "gemma-2-9b-it": "Gemma 9B",
-}
-SOURCE_COLOR_PINS = {
-    "livebench-reasoning": "#1f78b4",
-    "livebench-math": "#33a02c",
-    "livecodebench": "#e31a1c",
-    "mmlu-pro-computer science": "#ff7f00",
-    "mmlu-pro-math": "#6a3d9a",
-}
 
 
 def stable_sigmoid(values: np.ndarray) -> np.ndarray:
@@ -94,44 +73,8 @@ def save_figure(fig: plt.Figure, output_base: Path) -> None:
     """Save a matplotlib figure as PNG."""
 
     output_base.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_base.with_suffix(".png"), dpi=300, bbox_inches="tight")
+    fig.savefig(output_base.with_suffix(".png"), dpi=EXPORT_DPI, bbox_inches="tight")
     plt.close(fig)
-
-
-def style_axis(ax: plt.Axes) -> None:
-    """Remove unused frame lines and keep a cleaner plotting surface."""
-
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-
-def judge_color_map(judge_ids: np.ndarray) -> dict[str, str]:
-    """Return stable colors for each judge ID."""
-
-    return {
-        judge_id: JUDGE_COLOR_PINS.get(judge_id, _fallback_judge_color(judge_id))
-        for judge_id in map(str, judge_ids)
-    }
-
-
-def source_color_map(source_ids: list[str]) -> dict[str, str]:
-    """Return stable colors for each source ID."""
-
-    return {
-        source_id: SOURCE_COLOR_PINS.get(source_id, _fallback_judge_color(source_id))
-        for source_id in source_ids
-    }
-
-
-def _fallback_judge_color(judge_id: str) -> str:
-    """Generate a deterministic fallback color for judges without pinned colors."""
-
-    digest = hashlib.sha256(judge_id.encode("utf-8")).digest()
-    hue = int.from_bytes(digest[:2], byteorder="big") / 65535.0
-    saturation = 0.55 + (digest[2] / 255.0) * 0.15
-    value = 0.65 + (digest[3] / 255.0) * 0.2
-    red, green, blue = colorsys.hsv_to_rgb(hue, saturation, value)
-    return f"#{int(red * 255):02x}{int(green * 255):02x}{int(blue * 255):02x}"
 
 
 def sample_prior_predictive_probabilities(
@@ -204,6 +147,7 @@ def sample_prior_predictive_probabilities(
 def plot_prior_predictive_probabilities(
     matrix: pl.DataFrame,
     config: ExperimentConfig,
+    posterior: dict[str, np.ndarray] | None = None,
     *,
     num_draws: int = 1000,
 ) -> plt.Figure:
@@ -214,38 +158,117 @@ def plot_prior_predictive_probabilities(
         config,
         num_draws=num_draws,
     )
+    prior_color = "#0f4c81"
     fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
     probability_axis, mean_axis = axes
-    probability_axis.hist(probabilities, bins=40, density=True, color="#5b6670", alpha=0.85)
+    probability_axis.hist(probabilities, bins=40, density=True, color=prior_color, alpha=0.85)
     probability_axis.axvline(0.05, color="#9aa0a6", linestyle="--", linewidth=1.0)
     probability_axis.axvline(0.95, color="#9aa0a6", linestyle="--", linewidth=1.0)
+    probability_ymax = float(probability_axis.get_ylim()[1])
+    probability_axis.text(
+        0.05,
+        probability_ymax * 0.96,
+        "5%",
+        ha="center",
+        va="top",
+        fontsize=8,
+        color="#6b7280",
+    )
+    probability_axis.text(
+        0.95,
+        probability_ymax * 0.96,
+        "95%",
+        ha="center",
+        va="top",
+        fontsize=8,
+        color="#6b7280",
+    )
     probability_axis.set_xlabel("Prior predictive P(y=1)")
     probability_axis.set_ylabel("Density")
-    probability_axis.set_title("Item-level probabilities")
     style_axis(probability_axis)
-    mean_axis.hist(judge_means, bins=30, density=True, color="#0f4c81", alpha=0.85)
+    posterior_overlay = None
+    if posterior is not None and "theta" in posterior and "b" in posterior:
+        posterior_overlay, _, _ = posterior_predictive_judge_accuracy(matrix, posterior)
+    mean_axis.axvspan(0.45, 0.55, color="#d9dde3", alpha=0.55, zorder=0)
+    mean_axis.hist(judge_means, bins=30, density=True, color=prior_color, alpha=0.85)
     mean_axis.axvline(0.5, color="#9aa0a6", linestyle="--", linewidth=1.0)
+    if posterior_overlay is not None and posterior_overlay.size > 0:
+        overlay_min = float(posterior_overlay.min())
+        overlay_max = float(posterior_overlay.max())
+        mean_axis.axvspan(overlay_min, overlay_max, color="#c7d8eb", alpha=0.35, zorder=1)
+        mean_axis.vlines(
+            posterior_overlay,
+            ymin=0.0,
+            ymax=0.12,
+            transform=mean_axis.get_xaxis_transform(),
+            color="#1a1a1a",
+            linewidth=1.0,
+            alpha=0.75,
+        )
+        mean_axis.text(
+            0.98,
+            0.98,
+            "light span = observed range\nrug = observed accuracies",
+            transform=mean_axis.transAxes,
+            ha="right",
+            va="top",
+            fontsize=8,
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9, "pad": 2.5},
+        )
     mean_axis.set_xlabel("Prior predictive judge mean accuracy")
     mean_axis.set_ylabel("Density")
-    mean_axis.set_title("Judge-level averages")
     style_axis(mean_axis)
-    fig.suptitle("Prior Predictive Calibration", y=1.02)
     fig.tight_layout()
     return fig
 
 
-def plot_judge_reliability_ridge(posterior: dict[str, np.ndarray]) -> plt.Figure:
+def plot_judge_reliability_ridge(
+    matrix: pl.DataFrame,
+    posterior: dict[str, np.ndarray],
+) -> plt.Figure:
     """Plot stacked posterior densities for judge reliability."""
 
     theta_samples = flatten_draws(posterior["theta"])
     judge_ids = posterior["judge_ids"]
     color_map = judge_color_map(judge_ids)
+    observed_judge_ids, observed = observed_accuracy(matrix)
+    validate_posterior_judge_order(observed_judge_ids, posterior)
+    predicted_mean, predictive_lower, predictive_upper = posterior_predictive_judge_accuracy(
+        matrix,
+        posterior,
+    )
+    accuracy_values = np.concatenate([observed, predicted_mean, predictive_lower, predictive_upper])
+    observed_map = {
+        str(judge_id): float(observed[index]) for index, judge_id in enumerate(observed_judge_ids)
+    }
+    predictive_map = {
+        str(judge_id): (
+            float(predicted_mean[index]),
+            float(predictive_lower[index]),
+            float(predictive_upper[index]),
+        )
+        for index, judge_id in enumerate(observed_judge_ids)
+    }
     ordering = np.argsort(theta_samples.mean(axis=0))
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ridge_handles: list[Patch] = []
-    ordered_judge_ids: list[str] = []
+    fig, (ridge_axis, adequacy_axis) = plt.subplots(
+        1,
+        2,
+        figsize=(8.8, 8.0),
+        gridspec_kw={"width_ratios": [4.6, 1.8], "wspace": 0.06},
+        sharey=True,
+    )
+    x_min = float(np.quantile(theta_samples, 0.01))
+    x_max = float(np.quantile(theta_samples, 0.99))
+    x_span = max(1e-6, x_max - x_min)
+    label_x = x_min - 0.28 * x_span
+    accuracy_min = float(np.min(accuracy_values))
+    accuracy_max = float(np.max(accuracy_values))
+    accuracy_pad = max(0.005, 0.1 * (accuracy_max - accuracy_min))
+    accuracy_left = max(0.0, accuracy_min - accuracy_pad)
+    accuracy_right = min(1.0, accuracy_max + accuracy_pad)
     for row_index, judge_index in enumerate(ordering):
         values = theta_samples[:, judge_index]
+        theta_mean = float(values.mean())
         hist, edges = np.histogram(values, bins=40, density=True)
         centers = 0.5 * (edges[:-1] + edges[1:])
         positive_mask = hist > 0.0
@@ -255,61 +278,95 @@ def plot_judge_reliability_ridge(posterior: dict[str, np.ndarray]) -> plt.Figure
             continue
         baseline = row_index * 1.1
         judge_id = str(judge_ids[judge_index])
-        ax.fill_between(
+        ridge_axis.fill_between(
             centers,
             baseline,
             baseline + density,
             alpha=0.7,
             color=color_map[judge_id],
         )
-        ordered_judge_ids.append(judge_id)
-        ridge_handles.append(Patch(facecolor=color_map[judge_id], edgecolor="none", label=judge_id))
-    ax.set_yticks([])
-    ax.spines["left"].set_visible(False)
-    ax.set_xlabel("Posterior reliability (theta)")
-    style_axis(ax)
-    ridge_handles = [
-        Patch(
-            facecolor=color_map[judge_id],
-            edgecolor="none",
-            label=JUDGE_LABEL_PINS.get(judge_id, judge_id),
+        peak_height = float(density.max())
+        ridge_axis.vlines(
+            theta_mean,
+            baseline,
+            baseline + peak_height,
+            color="#2f2f2f",
+            linewidth=1.5,
+            alpha=0.95,
         )
-        for judge_id in ordered_judge_ids
-    ]
-    if ridge_handles:
-        fig.legend(
-            handles=ridge_handles,
-            title="Judges",
-            loc="lower center",
-            bbox_to_anchor=(0.5, 0.0),
-            ncol=len(ridge_handles),
-            frameon=False,
+        ridge_axis.scatter(
+            theta_mean,
+            baseline + peak_height,
+            s=12,
+            color="#2f2f2f",
+            zorder=3,
+        )
+        observed_value = observed_map[judge_id]
+        predicted_value, lower_value, upper_value = predictive_map[judge_id]
+        adequacy_axis.hlines(
+            baseline,
+            lower_value,
+            upper_value,
+            color=color_map[judge_id],
+            linewidth=1.4,
+            alpha=0.95,
+        )
+        adequacy_axis.scatter(
+            observed_value,
+            baseline,
+            marker="s",
+            s=32,
+            color=color_map[judge_id],
+            zorder=3,
+        )
+        adequacy_axis.scatter(
+            predicted_value,
+            baseline,
+            marker="o",
+            s=32,
+            color=color_map[judge_id],
+            zorder=3,
+        )
+        ridge_axis.text(
+            label_x,
+            baseline + peak_height * 0.48,
+            JUDGE_LABEL_PINS.get(judge_id, judge_id),
+            ha="left",
+            va="center",
             fontsize=9,
-            title_fontsize=9,
-            handlelength=1.2,
-            columnspacing=1.0,
+            color=color_map[judge_id],
+            fontweight="semibold",
         )
-    fig.tight_layout(rect=(0.0, 0.08, 1.0, 1.0))
-    return fig
-
-
-def plot_item_parameter_scatter(
-    matrix: pl.DataFrame,
-    posterior: dict[str, np.ndarray],
-) -> plt.Figure:
-    """Scatter plot of item difficulty versus discrimination."""
-
-    b_mean = flatten_draws(posterior["b"]).mean(axis=0)
-    a_mean = (
-        flatten_draws(posterior["a"]).mean(axis=0) if "a" in posterior else np.ones_like(b_mean)
+        adequacy_axis.text(
+            accuracy_right + 0.01 * max(1e-6, accuracy_right - accuracy_left),
+            baseline,
+            f"{observed_value:.3f} | θ̄ {theta_mean:.2f}",
+            ha="left",
+            va="center",
+            fontsize=8.5,
+            color="#2f2f2f",
+        )
+    ridge_axis.set_xlim(label_x - 0.02 * x_span, x_max + 0.25 * x_span)
+    ridge_axis.set_yticks([])
+    ridge_axis.spines["left"].set_visible(False)
+    ridge_axis.set_xlabel("Posterior reliability (theta)")
+    style_axis(ridge_axis)
+    adequacy_axis.set_xlim(accuracy_left, accuracy_right)
+    adequacy_axis.set_xlabel("Accuracy")
+    adequacy_axis.set_yticks([])
+    adequacy_axis.spines["left"].set_visible(False)
+    adequacy_axis.text(
+        0.98,
+        0.98,
+        "square = observed\ncircle = predicted\nline = 90% interval",
+        transform=adequacy_axis.transAxes,
+        ha="right",
+        va="top",
+        fontsize=8.5,
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9, "pad": 2.5},
     )
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.scatter(b_mean, a_mean, alpha=0.8, color="#5b6670")
-    ax.set_xlabel("Item difficulty mean (b)")
-    ax.set_ylabel("Item discrimination mean (a)")
-    ax.set_title("Item Parameter Summary")
-    style_axis(ax)
-    fig.tight_layout()
+    style_axis(adequacy_axis)
+    fig.subplots_adjust(left=0.12, right=0.97, bottom=0.12, top=0.98, wspace=0.06)
     return fig
 
 
@@ -344,16 +401,6 @@ def top_source_ids(
     """Return the most data-rich source IDs for small-multiple plotting."""
 
     return ordered_source_ids(matrix, posterior)[:max_sources]
-
-
-def _source_facet_grid_shape(source_count: int, max_columns: int = 2) -> tuple[int, int]:
-    """Return subplot grid dimensions for source small multiples."""
-
-    if source_count <= 0:
-        raise ValueError("Source facet plotting requires at least one source.")
-    columns = min(max_columns, source_count)
-    rows = int(np.ceil(source_count / columns))
-    return rows, columns
 
 
 def source_reliability_summary(
@@ -493,79 +540,11 @@ def posterior_predictive_judge_accuracy(
     )
 
 
-def plot_posterior_predictive_check(
-    matrix: pl.DataFrame,
-    posterior: dict[str, np.ndarray],
-) -> plt.Figure:
-    """Compare observed judge accuracy to posterior predictive intervals."""
-
-    judge_ids, observed = observed_accuracy(matrix)
-    validate_posterior_judge_order(judge_ids, posterior)
-    predicted_mean, lower, upper = posterior_predictive_judge_accuracy(matrix, posterior)
-    color_map = judge_color_map(judge_ids)
-    fig, ax = plt.subplots(figsize=(8, 8))
-    y_positions = np.arange(len(judge_ids))
-    ordered_judge_ids = [str(judge_id) for judge_id in judge_ids]
-    for index, judge_id in enumerate(ordered_judge_ids):
-        color = color_map[judge_id]
-        ax.errorbar(
-            predicted_mean[index],
-            y_positions[index],
-            xerr=np.asarray(
-                [
-                    [predicted_mean[index] - lower[index]],
-                    [upper[index] - predicted_mean[index]],
-                ]
-            ),
-            fmt="o",
-            color=color,
-            ecolor=color,
-            capsize=3,
-        )
-        ax.scatter(observed[index], y_positions[index], marker="s", color=color)
-    ax.set_yticks([])
-    ax.spines["left"].set_visible(False)
-    ax.set_xlabel("")
-    ax.text(
-        0.02,
-        0.98,
-        "circle = posterior predictive\nsquare = observed",
-        transform=ax.transAxes,
-        va="top",
-        ha="left",
-        fontsize=9,
-        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9, "pad": 3.0},
-    )
-    style_axis(ax)
-    model_handles = [
-        Patch(
-            facecolor=color_map[judge_id],
-            edgecolor="none",
-            label=JUDGE_LABEL_PINS.get(judge_id, judge_id),
-        )
-        for judge_id in ordered_judge_ids
-    ]
-    fig.legend(
-        handles=model_handles,
-        title="Judges",
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.0),
-        ncol=len(model_handles),
-        frameon=False,
-        fontsize=9,
-        title_fontsize=9,
-        handlelength=1.2,
-        columnspacing=1.0,
-    )
-    fig.tight_layout(rect=(0.0, 0.08, 1.0, 1.0))
-    return fig
-
-
 def plot_judge_reliability_by_source(
     matrix: pl.DataFrame,
     posterior: dict[str, np.ndarray],
 ) -> plt.Figure:
-    """Plot source-specific judge reliability intervals as synchronized small multiples."""
+    """Plot source-specific judge reliability means as an annotated heatmap."""
 
     if "theta_source" not in posterior or "source_ids" not in posterior:
         raise ValueError("Posterior does not contain source-aware reliability samples.")
@@ -577,97 +556,77 @@ def plot_judge_reliability_by_source(
     global_theta = flatten_draws(posterior["theta"]).mean(axis=0)
     global_ordering = np.argsort(global_theta)[::-1]
     ordered_judge_ids = [str(judge_ids[index]) for index in global_ordering]
-    color_map = judge_color_map(judge_ids)
-    global_means = {
-        str(judge_id): float(global_theta[index]) for index, judge_id in enumerate(judge_ids)
-    }
-    source_counts = matrix.group_by("source").len().rename({"len": "item_count"}).to_dicts()
-    counts_map = {str(row["source"]): int(row["item_count"]) for row in source_counts}
-    theta_min = float(summary.get_column("theta_p05").min())
-    theta_max = float(summary.get_column("theta_p95").max())
-    x_padding = max(0.1, 0.08 * (theta_max - theta_min))
-    y_positions = np.arange(len(ordered_judge_ids), dtype=float)
-    rows, columns = _source_facet_grid_shape(len(ordered_sources))
-    fig, axes = plt.subplots(
-        rows,
-        columns,
-        figsize=(6 * columns, 3.5 * rows),
-        sharex=True,
-        sharey=True,
-        squeeze=False,
+    heatmap = np.asarray(
+        [
+            [
+                float(
+                    summary.filter(
+                        (pl.col("judge_id") == judge_id) & (pl.col("source") == source_id)
+                    )
+                    .get_column("theta_mean")
+                    .item()
+                )
+                for source_id in ordered_sources
+            ]
+            for judge_id in ordered_judge_ids
+        ],
+        dtype=float,
     )
-    axes_array = np.asarray(axes).reshape(-1)
-    for index, (axis, source_id) in enumerate(zip(axes_array, ordered_sources, strict=False)):
-        source_rows = summary.filter(pl.col("source") == source_id)
-        for y_position, judge_id in zip(y_positions, ordered_judge_ids, strict=False):
-            row = source_rows.filter(pl.col("judge_id") == judge_id)
-            mean = float(row.get_column("theta_mean").item())
-            lower = float(row.get_column("theta_p05").item())
-            upper = float(row.get_column("theta_p95").item())
-            color = color_map[judge_id]
-            axis.errorbar(
-                mean,
-                y_position,
-                xerr=np.asarray([[mean - lower], [upper - mean]]),
-                fmt="o",
-                color=color,
-                ecolor=color,
-                elinewidth=1.3,
-                capsize=2.5,
-                markersize=4.5,
-                zorder=3,
-            )
-            axis.scatter(
-                global_means[judge_id],
-                y_position,
-                marker="|",
-                color="#70757a",
-                s=120,
-                linewidths=1.1,
-                zorder=2,
-            )
-        axis.axvline(0.0, color="#9aa0a6", linewidth=1.0, linestyle="--", alpha=0.9, zorder=1)
-        axis.set_title(f"{source_id} (n={counts_map.get(source_id, 0)})", fontsize=10)
-        axis.set_xlim(theta_min - x_padding, theta_max + x_padding)
-        axis.set_ylim(len(ordered_judge_ids) - 0.5, -0.5)
-        row_index, column_index = divmod(index, columns)
-        if column_index == 0:
-            axis.set_yticks(y_positions)
-            axis.set_yticklabels(
-                [JUDGE_LABEL_PINS.get(judge_id, judge_id) for judge_id in ordered_judge_ids],
-                fontsize=9,
-            )
-        else:
-            axis.tick_params(axis="y", labelleft=False)
-        if row_index == rows - 1:
-            axis.set_xlabel("Posterior reliability (theta)")
-        style_axis(axis)
-    for axis in axes_array[len(ordered_sources) :]:
-        axis.set_visible(False)
-    model_handles = [
-        Patch(
-            facecolor=color_map[judge_id],
-            edgecolor="none",
-            label=JUDGE_LABEL_PINS.get(judge_id, judge_id),
-        )
-        for judge_id in ordered_judge_ids
-    ]
-    model_handles.append(
-        Line2D([], [], color="#70757a", marker="|", linestyle="None", label="global mean")
+    transposed_heatmap = heatmap.T
+    max_abs = float(np.max(np.abs(heatmap))) if heatmap.size else 1.0
+    color_limit = max(0.25, max_abs)
+    side = max(6.5, 0.95 * max(len(ordered_sources), len(ordered_judge_ids)))
+    fig, ax = plt.subplots(figsize=(side, side))
+    image = ax.imshow(
+        transposed_heatmap,
+        cmap="RdBu",
+        vmin=-color_limit,
+        vmax=color_limit,
+        aspect="equal",
+        interpolation="nearest",
     )
-    fig.legend(
-        handles=model_handles,
-        title="Judges",
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.0),
-        ncol=min(len(model_handles), 3),
-        frameon=False,
+    ax.set_xticks(np.arange(len(ordered_judge_ids)))
+    ax.set_xticklabels(
+        [JUDGE_LABEL_PINS.get(judge_id, judge_id) for judge_id in ordered_judge_ids],
         fontsize=9,
-        title_fontsize=9,
-        handlelength=1.2,
-        columnspacing=1.0,
     )
-    fig.tight_layout(rect=(0.0, 0.05, 1.0, 1.0))
+    midpoint = (len(ordered_judge_ids) - 1) / 2.0
+    for index, tick_label in enumerate(ax.get_xticklabels()):
+        if index < midpoint:
+            tick_label.set_ha("right")
+        elif index > midpoint:
+            tick_label.set_ha("left")
+    ax.set_yticks(np.arange(len(ordered_sources)))
+    ax.set_yticklabels(
+        [source_display_label(source_id) for source_id in ordered_sources],
+        fontsize=9,
+    )
+    for row_index, _source_id in enumerate(ordered_sources):
+        for column_index, _judge_id in enumerate(ordered_judge_ids):
+            value = transposed_heatmap[row_index, column_index]
+            text_color = "white" if abs(value) > 0.45 * color_limit else "#202124"
+            ax.text(
+                column_index,
+                row_index,
+                f"{value:.2f}",
+                ha="center",
+                va="center",
+                fontsize=8.5,
+                color=text_color,
+                fontweight="bold" if abs(value) > 0.5 else "normal",
+            )
+    colorbar_axis = inset_axes(
+        ax,
+        width="3.5%",
+        height="100%",
+        loc="lower left",
+        bbox_to_anchor=(1.02, 0.0, 1.0, 1.0),
+        bbox_transform=ax.transAxes,
+        borderpad=0.0,
+    )
+    fig.colorbar(image, cax=colorbar_axis)
+    style_axis(ax)
+    fig.subplots_adjust(left=0.2, right=0.88, bottom=0.18, top=0.94)
     return fig
 
 
@@ -681,8 +640,9 @@ def main() -> None:
     matrix = pl.read_parquet(config.data.matrix_path)
     figures_dir = config.figures_dir
     figures_dir.mkdir(parents=True, exist_ok=True)
+    posterior = load_posterior(posterior_path) if posterior_path.exists() else None
     save_figure(
-        plot_prior_predictive_probabilities(matrix, config),
+        plot_prior_predictive_probabilities(matrix, config, posterior),
         figure_base_path(figures_dir, PRIOR_PREDICTIVE_STEM),
     )
     if not posterior_path.exists():
@@ -692,27 +652,15 @@ def main() -> None:
             figures_dir,
         )
         return
-    posterior = load_posterior(posterior_path)
     backend = str(posterior.get("backend", "unknown"))
     logger.info(
         "loaded posterior from %s using backend=%s",
         posterior_path,
         backend,
     )
-    ridge_figure = plot_judge_reliability_ridge(posterior)
-    ridge_figure.savefig(
-        figure_png_path(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM),
-        dpi=300,
-        bbox_inches="tight",
-    )
-    plt.close(ridge_figure)
     save_figure(
-        plot_item_parameter_scatter(matrix, posterior),
-        figure_base_path(figures_dir, ITEM_PARAMETER_SCATTER_STEM),
-    )
-    save_figure(
-        plot_posterior_predictive_check(matrix, posterior),
-        figure_base_path(figures_dir, POSTERIOR_PREDICTIVE_STEM),
+        plot_judge_reliability_ridge(matrix, posterior),
+        figure_base_path(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM),
     )
     if "theta_source" in posterior and "source_ids" in posterior:
         save_figure(
