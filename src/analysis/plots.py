@@ -20,6 +20,8 @@ from src.analysis.figure_paths import (
 )
 from src.analysis.plot_config import (
     EXPORT_DPI,
+    FONT_SIZE_ANNOTATION,
+    FONT_SIZE_TICK,
     JUDGE_LABEL_PINS,
     judge_color_map,
     source_display_label,
@@ -151,68 +153,63 @@ def plot_prior_predictive_probabilities(
     *,
     num_draws: int = 1000,
 ) -> plt.Figure:
-    """Plot compact prior predictive summaries for probability scale calibration."""
+    """Plot prior predictive judge-mean calibration on the probability scale."""
 
-    probabilities, judge_means = sample_prior_predictive_probabilities(
+    _, judge_means = sample_prior_predictive_probabilities(
         matrix,
         config,
         num_draws=num_draws,
     )
-    prior_color = "#0f4c81"
-    fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
-    probability_axis, mean_axis = axes
-    probability_axis.hist(probabilities, bins=40, density=True, color=prior_color, alpha=0.85)
-    probability_axis.axvline(0.05, color="#9aa0a6", linestyle="--", linewidth=1.0)
-    probability_axis.axvline(0.95, color="#9aa0a6", linestyle="--", linewidth=1.0)
-    probability_ymax = float(probability_axis.get_ylim()[1])
-    probability_axis.text(
-        0.05,
-        probability_ymax * 0.96,
-        "5%",
-        ha="center",
-        va="top",
-        fontsize=8,
-        color="#6b7280",
-    )
-    probability_axis.text(
-        0.95,
-        probability_ymax * 0.96,
-        "95%",
-        ha="center",
-        va="top",
-        fontsize=8,
-        color="#6b7280",
-    )
-    probability_axis.set_xlabel("Prior predictive P(y=1)")
-    probability_axis.set_ylabel("Density")
-    style_axis(probability_axis)
-    posterior_overlay = None
+    prior_color = "#7a8793"
+    fig, mean_axis = plt.subplots(figsize=(6.2, 3.8))
+    posterior_predictive_overlay = None
+    posterior_overlay_judge_ids: np.ndarray | None = None
     if posterior is not None and "theta" in posterior and "b" in posterior:
-        posterior_overlay, _, _ = posterior_predictive_judge_accuracy(matrix, posterior)
-    mean_axis.axvspan(0.45, 0.55, color="#d9dde3", alpha=0.55, zorder=0)
-    mean_axis.hist(judge_means, bins=30, density=True, color=prior_color, alpha=0.85)
-    mean_axis.axvline(0.5, color="#9aa0a6", linestyle="--", linewidth=1.0)
-    if posterior_overlay is not None and posterior_overlay.size > 0:
-        overlay_min = float(posterior_overlay.min())
-        overlay_max = float(posterior_overlay.max())
-        mean_axis.axvspan(overlay_min, overlay_max, color="#c7d8eb", alpha=0.35, zorder=1)
-        mean_axis.vlines(
-            posterior_overlay,
-            ymin=0.0,
-            ymax=0.12,
-            transform=mean_axis.get_xaxis_transform(),
-            color="#1a1a1a",
-            linewidth=1.0,
-            alpha=0.75,
+        posterior_overlay_judge_ids = np.asarray(posterior.get("judge_ids", []), dtype=str)
+        posterior_predictive_overlay, _, _ = posterior_predictive_judge_accuracy(
+            matrix,
+            posterior,
         )
+    mean_axis.axvspan(0.45, 0.55, color="#d9dde3", alpha=0.55, zorder=0)
+    mean_axis.hist(
+        judge_means,
+        bins=30,
+        density=True,
+        histtype="step",
+        color=prior_color,
+        linewidth=1.4,
+    )
+    mean_axis.axvline(0.5, color="#9aa0a6", linestyle="--", linewidth=1.0)
+    if posterior_predictive_overlay is not None and posterior_predictive_overlay.size > 0:
+        if posterior_overlay_judge_ids is not None and posterior_overlay_judge_ids.size > 0:
+            overlay_color_map = judge_color_map(posterior_overlay_judge_ids)
+            overlay_colors = [
+                overlay_color_map[str(judge_id)] for judge_id in posterior_overlay_judge_ids
+            ]
+        else:
+            overlay_colors = ["#0f4c81"] * posterior_predictive_overlay.size
+        for overlay_value, overlay_color in zip(
+            posterior_predictive_overlay,
+            overlay_colors,
+            strict=False,
+        ):
+            mean_axis.vlines(
+                float(overlay_value),
+                ymin=0.0,
+                ymax=0.08,
+                transform=mean_axis.get_xaxis_transform(),
+                color=overlay_color,
+                linewidth=1.1,
+                alpha=0.8,
+            )
         mean_axis.text(
             0.98,
             0.98,
-            "light span = observed range\nrug = observed accuracies",
+            "rug = posterior means",
             transform=mean_axis.transAxes,
             ha="right",
             va="top",
-            fontsize=8,
+            fontsize=FONT_SIZE_ANNOTATION,
             bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9, "pad": 2.5},
         )
     mean_axis.set_xlabel("Prior predictive judge mean accuracy")
@@ -268,7 +265,6 @@ def plot_judge_reliability_ridge(
     accuracy_right = min(1.0, accuracy_max + accuracy_pad)
     for row_index, judge_index in enumerate(ordering):
         values = theta_samples[:, judge_index]
-        theta_mean = float(values.mean())
         hist, edges = np.histogram(values, bins=40, density=True)
         centers = 0.5 * (edges[:-1] + edges[1:])
         positive_mask = hist > 0.0
@@ -282,25 +278,10 @@ def plot_judge_reliability_ridge(
             centers,
             baseline,
             baseline + density,
-            alpha=0.7,
+            alpha=0.6,
             color=color_map[judge_id],
         )
         peak_height = float(density.max())
-        ridge_axis.vlines(
-            theta_mean,
-            baseline,
-            baseline + peak_height,
-            color="#2f2f2f",
-            linewidth=1.5,
-            alpha=0.95,
-        )
-        ridge_axis.scatter(
-            theta_mean,
-            baseline + peak_height,
-            s=12,
-            color="#2f2f2f",
-            zorder=3,
-        )
         observed_value = observed_map[judge_id]
         predicted_value, lower_value, upper_value = predictive_map[judge_id]
         adequacy_axis.hlines(
@@ -333,18 +314,9 @@ def plot_judge_reliability_ridge(
             JUDGE_LABEL_PINS.get(judge_id, judge_id),
             ha="left",
             va="center",
-            fontsize=9,
+            fontsize=FONT_SIZE_TICK,
             color=color_map[judge_id],
             fontweight="semibold",
-        )
-        adequacy_axis.text(
-            accuracy_right + 0.01 * max(1e-6, accuracy_right - accuracy_left),
-            baseline,
-            f"{observed_value:.3f} | θ̄ {theta_mean:.2f}",
-            ha="left",
-            va="center",
-            fontsize=8.5,
-            color="#2f2f2f",
         )
     ridge_axis.set_xlim(label_x - 0.02 * x_span, x_max + 0.25 * x_span)
     ridge_axis.set_yticks([])
@@ -362,7 +334,7 @@ def plot_judge_reliability_ridge(
         transform=adequacy_axis.transAxes,
         ha="right",
         va="top",
-        fontsize=8.5,
+        fontsize=FONT_SIZE_ANNOTATION,
         bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9, "pad": 2.5},
     )
     style_axis(adequacy_axis)
@@ -401,6 +373,13 @@ def top_source_ids(
     """Return the most data-rich source IDs for small-multiple plotting."""
 
     return ordered_source_ids(matrix, posterior)[:max_sources]
+
+
+def staggered_heatmap_judge_labels(judge_ids: list[str]) -> list[str]:
+    """Return centered heatmap labels with alternating vertical staggering."""
+
+    labels = [JUDGE_LABEL_PINS.get(judge_id, judge_id) for judge_id in judge_ids]
+    return [label if index % 2 == 0 else f"\n{label}" for index, label in enumerate(labels)]
 
 
 def source_reliability_summary(
@@ -556,22 +535,20 @@ def plot_judge_reliability_by_source(
     global_theta = flatten_draws(posterior["theta"]).mean(axis=0)
     global_ordering = np.argsort(global_theta)[::-1]
     ordered_judge_ids = [str(judge_ids[index]) for index in global_ordering]
-    heatmap = np.asarray(
-        [
-            [
-                float(
-                    summary.filter(
-                        (pl.col("judge_id") == judge_id) & (pl.col("source") == source_id)
-                    )
-                    .get_column("theta_mean")
-                    .item()
-                )
-                for source_id in ordered_sources
-            ]
-            for judge_id in ordered_judge_ids
-        ],
-        dtype=float,
+    pivoted = (
+        summary.pivot(on="judge_id", index="source", values="theta_mean")
+        .with_columns(pl.col("source").cast(pl.String))
+        .with_columns(
+            pl.col("source")
+            .replace_strict(ordered_sources, np.arange(len(ordered_sources), dtype=int))
+            .alias("_source_order")
+        )
+        .sort("_source_order")
+        .drop("_source_order")
     )
+    heatmap = np.column_stack(
+        [pivoted.get_column(judge_id).to_numpy().astype(float) for judge_id in ordered_judge_ids]
+    ).T
     transposed_heatmap = heatmap.T
     max_abs = float(np.max(np.abs(heatmap))) if heatmap.size else 1.0
     color_limit = max(0.25, max_abs)
@@ -587,19 +564,13 @@ def plot_judge_reliability_by_source(
     )
     ax.set_xticks(np.arange(len(ordered_judge_ids)))
     ax.set_xticklabels(
-        [JUDGE_LABEL_PINS.get(judge_id, judge_id) for judge_id in ordered_judge_ids],
-        fontsize=9,
+        staggered_heatmap_judge_labels(ordered_judge_ids),
+        fontsize=FONT_SIZE_TICK,
     )
-    midpoint = (len(ordered_judge_ids) - 1) / 2.0
-    for index, tick_label in enumerate(ax.get_xticklabels()):
-        if index < midpoint:
-            tick_label.set_ha("right")
-        elif index > midpoint:
-            tick_label.set_ha("left")
     ax.set_yticks(np.arange(len(ordered_sources)))
     ax.set_yticklabels(
         [source_display_label(source_id) for source_id in ordered_sources],
-        fontsize=9,
+        fontsize=FONT_SIZE_TICK,
     )
     for row_index, _source_id in enumerate(ordered_sources):
         for column_index, _judge_id in enumerate(ordered_judge_ids):
@@ -611,7 +582,7 @@ def plot_judge_reliability_by_source(
                 f"{value:.2f}",
                 ha="center",
                 va="center",
-                fontsize=8.5,
+                fontsize=FONT_SIZE_ANNOTATION,
                 color=text_color,
                 fontweight="bold" if abs(value) > 0.5 else "normal",
             )

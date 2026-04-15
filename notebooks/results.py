@@ -14,6 +14,7 @@ def _():
     import polars as pl
     from src.analysis.diagnostics import load_posterior
     from src.analysis.figure_paths import (
+        DIAGNOSTICS_SUMMARY_STEM,
         JUDGE_RELIABILITY_BY_SOURCE_STEM,
         JUDGE_RELIABILITY_RIDGE_STEM,
         PRIOR_PREDICTIVE_STEM,
@@ -24,6 +25,7 @@ def _():
 
     return (
         ExperimentConfig,
+        DIAGNOSTICS_SUMMARY_STEM,
         JUDGE_RELIABILITY_BY_SOURCE_STEM,
         JUDGE_RELIABILITY_RIDGE_STEM,
         Path,
@@ -39,12 +41,13 @@ def _():
 
 
 @app.cell
-def _(ExperimentConfig, mo):
-    config = ExperimentConfig.from_yaml("configs/experiment.yaml")
+def _(ExperimentConfig, Path, mo):
+    config_path = Path("configs/experiment.yaml")
+    config = ExperimentConfig.from_yaml(config_path)
     refresh_button = mo.ui.run_button(
-        label="Refresh figures",
+        label="Refresh analysis",
         kind="neutral",
-        tooltip="Regenerate plot PNGs from current code and config.",
+        tooltip="Regenerate diagnostics and plot PNGs from current code and config.",
     )
     intro = mo.md(
         f"""
@@ -59,40 +62,52 @@ def _(ExperimentConfig, mo):
         - Item subset size: `{config.data.subset_size}`
         """
     )
-    return config, intro, refresh_button
+    return config, config_path, intro, refresh_button
 
 
 @app.cell
-def _(config, mo, refresh_button, subprocess, sys):
+def _(config, config_path, mo, refresh_button, subprocess, sys):
     if not refresh_button.value:
         refresh_status = mo.md(
-            "Use **Refresh figures** to regenerate plot assets from the current code and config."
+            "Use **Refresh analysis** to regenerate diagnostics and plot assets "
+            "from the current code and config."
         )
     else:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "src.analysis.plots",
-                "--config",
-                "configs/experiment.yaml",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode == 0:
+        commands = [
+            ("diagnostics", "src.analysis.diagnostics"),
+            ("plots", "src.analysis.plots"),
+        ]
+        failures: list[str] = []
+        for step_name, module_name in commands:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    module_name,
+                    "--config",
+                    str(config_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                stderr = (result.stderr or result.stdout or "").strip()
+                failures.append(f"$ {step_name}\n{stderr}")
+        if not failures:
             refresh_status = mo.md(
-                f"Refreshed figures for `{config.experiment.name}` using `{config.model.variant}`."
+                f"Refreshed diagnostics and figures for `{config.experiment.name}` "
+                f"using `{config.model.variant}`."
             )
         else:
-            stderr = (result.stderr or result.stdout or "").strip()
-            refresh_status = mo.md(f"Figure refresh failed.\n\n```text\n{stderr}\n```")
+            failure_text = "\n\n".join(failures)
+            refresh_status = mo.md(f"Analysis refresh failed.\n\n```text\n{failure_text}\n```")
     return refresh_status
 
 
 @app.cell
 def _(
+    DIAGNOSTICS_SUMMARY_STEM,
     JUDGE_RELIABILITY_BY_SOURCE_STEM,
     JUDGE_RELIABILITY_RIDGE_STEM,
     PRIOR_PREDICTIVE_STEM,
@@ -106,6 +121,7 @@ def _(
     matrix_path = config.data.matrix_path
     posterior_path = config.inference.posterior_path
     figures_dir = config.figures_dir
+    diagnostics_path = figure_base_path(figures_dir, DIAGNOSTICS_SUMMARY_STEM).with_suffix(".png")
     prior_path = figure_base_path(figures_dir, PRIOR_PREDICTIVE_STEM).with_suffix(".png")
     ridge_path = figure_base_path(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM).with_suffix(".png")
     source_figure_path = figure_base_path(
@@ -125,13 +141,15 @@ def _(
         - Matrix: `{"present" if matrix is not None else "missing"}`
         - Posterior: `{"present" if posterior is not None else "missing"}`
         - Posterior backend: `{posterior_backend or "n/a"}`
-        - Prior predictive figure: `{"present" if prior_path.exists() else "missing"}`
+        - Diagnostics summary: `{"present" if diagnostics_path.exists() else "missing"}`
+        - Prior predictive judge-means figure: `{"present" if prior_path.exists() else "missing"}`
         - Judge reliability figure: `{"present" if ridge_path.exists() else "missing"}`
         - Source-aware figure: `{"present" if source_figure_path.exists() else "missing"}`
         """
     )
     return (
         matrix,
+        diagnostics_path,
         posterior,
         prior_path,
         ranking,
@@ -150,26 +168,39 @@ def _(Path, mo):
 
 
 @app.cell
-def _(image_panel, mo, prior_path):
+def _(config_path, diagnostics_path, image_panel, mo):
+    if diagnostics_path.exists():
+        diagnostics_panel = image_panel("Diagnostics Summary", diagnostics_path)
+    else:
+        diagnostics_panel = mo.md(
+            "## Diagnostics Summary\n"
+            f"Run `uv run python -m src.analysis.diagnostics --config {config_path}` "
+            "to create it."
+        )
+    return (diagnostics_panel,)
+
+
+@app.cell
+def _(config_path, image_panel, mo, prior_path):
     if prior_path.exists():
-        prior_panel = image_panel("Prior Predictive Figure", prior_path)
+        prior_panel = image_panel("Prior Predictive Judge Means", prior_path)
     else:
         prior_panel = mo.md(
-            "## Prior Predictive Figure\n"
-            "Run `uv run python -m src.analysis.plots --config configs/experiment.yaml` "
+            "## Prior Predictive Judge Means\n"
+            f"Run `uv run python -m src.analysis.plots --config {config_path}` "
             "to create it."
         )
     return (prior_panel,)
 
 
 @app.cell
-def _(image_panel, mo, ridge_path):
+def _(config_path, image_panel, mo, ridge_path):
     if ridge_path.exists():
         ridge_panel = image_panel("Judge Reliability Figure", ridge_path)
     else:
         ridge_panel = mo.md(
             "## Judge Reliability Figure\n"
-            "Run `uv run python -m src.analysis.plots --config configs/experiment.yaml` "
+            f"Run `uv run python -m src.analysis.plots --config {config_path}` "
             "to create it."
         )
     return (ridge_panel,)
@@ -202,6 +233,7 @@ def _(matrix, mo, ranking):
 
 @app.cell
 def _(
+    diagnostics_panel,
     intro,
     mo,
     prior_panel,
@@ -217,6 +249,7 @@ def _(
             mo.hstack([refresh_button], justify="start"),
             refresh_status,
             status,
+            diagnostics_panel,
             prior_panel,
             ridge_panel,
             source_panel,

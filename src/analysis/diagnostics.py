@@ -11,6 +11,7 @@ import numpy as np
 import polars as pl
 from matplotlib.ticker import FuncFormatter
 
+from src.analysis.figure_paths import DIAGNOSTICS_SUMMARY_STEM, figure_base_path
 from src.analysis.plot_config import EXPORT_DPI, style_axis
 from src.logging_utils import configure_logging, format_table_for_log
 from src.schemas import ExperimentConfig
@@ -136,25 +137,86 @@ def compute_ess(samples: np.ndarray) -> np.ndarray:
     return ess
 
 
-def summarize_diagnostics(posterior: dict[str, np.ndarray]) -> pl.DataFrame:
-    """Build a compact diagnostic summary table."""
+def _nanmax_or_nan(values: np.ndarray) -> float:
+    """Return the finite maximum of an array, preserving all-NaN inputs."""
 
-    rows: list[dict[str, float | int | str]] = []
-    divergences = int(np.asarray(posterior.get("diverging", np.array([]))).sum())
-    for name, values in posterior.items():
-        if name in POSTERIOR_METADATA_KEYS or name == "diverging":
-            continue
+    return float(np.nan) if np.isnan(values).all() else float(np.nanmax(values))
+
+
+def _nanmin_or_nan(values: np.ndarray) -> float:
+    """Return the finite minimum of an array, preserving all-NaN inputs."""
+
+    return float(np.nan) if np.isnan(values).all() else float(np.nanmin(values))
+
+
+def _parameter_label(parameter_name: str, values: np.ndarray) -> str:
+    """Return the compact plot label for a posterior parameter group."""
+
+    feature_count = int(_flatten_parameter(values).shape[-1])
+    if parameter_name == "theta":
+        return f"θ\n({feature_count} judges)"
+    if parameter_name == "b":
+        return f"b\n({feature_count} items)"
+    if parameter_name == "a":
+        return f"a\n({feature_count} items)"
+    if parameter_name == "tau_theta":
+        return f"τ_θ\n({feature_count} judges)"
+    if parameter_name == "theta_source":
+        if values.ndim >= 4:
+            n_judges = int(values.shape[-2])
+            n_sources = int(values.shape[-1])
+            return f"θ_source\n({n_judges}×{n_sources})"
+        return f"θ_source\n({feature_count} source effects)"
+    return parameter_name
+
+
+def diagnostic_parameter_rows(posterior: dict[str, np.ndarray]) -> list[dict[str, object]]:
+    """Compute per-parameter diagnostics once for summaries and figures."""
+
+    parameter_order = ["theta", "b", "a", "tau_theta", "theta_source"]
+    available_parameters = [
+        name for name in posterior if name not in POSTERIOR_METADATA_KEYS and name != "diverging"
+    ]
+    ordered_parameters = [
+        *[name for name in parameter_order if name in available_parameters],
+        *sorted(name for name in available_parameters if name not in parameter_order),
+    ]
+    rows: list[dict[str, object]] = []
+    for parameter_name in ordered_parameters:
+        values = posterior[parameter_name]
         rhat = compute_rhat(values)
         ess = compute_ess(values)
         rows.append(
             {
-                "parameter": name,
-                "rhat_max": float(np.nanmax(rhat)),
-                "ess_min": float(np.nanmin(ess)),
-                "divergences": divergences,
+                "parameter": parameter_name,
+                "label": _parameter_label(parameter_name, values),
+                "rhat": rhat,
+                "ess": ess,
+                "rhat_max": _nanmax_or_nan(rhat),
+                "ess_min": _nanmin_or_nan(ess),
             }
         )
-    return pl.DataFrame(rows).sort("parameter")
+    return rows
+
+
+def summarize_diagnostic_rows(rows: list[dict[str, object]], divergences: int) -> pl.DataFrame:
+    """Build a compact diagnostic summary table from computed rows."""
+
+    return pl.DataFrame(
+        {
+            "parameter": [str(row["parameter"]) for row in rows],
+            "rhat_max": [float(row["rhat_max"]) for row in rows],
+            "ess_min": [float(row["ess_min"]) for row in rows],
+            "divergences": [divergences] * len(rows),
+        }
+    ).sort("parameter")
+
+
+def summarize_diagnostics(posterior: dict[str, np.ndarray]) -> pl.DataFrame:
+    """Build a compact diagnostic summary table."""
+
+    divergences = int(np.asarray(posterior.get("diverging", np.array([]))).sum())
+    return summarize_diagnostic_rows(diagnostic_parameter_rows(posterior), divergences)
 
 
 def infer_chain_count(posterior: dict[str, np.ndarray]) -> int:
@@ -170,32 +232,7 @@ def infer_chain_count(posterior: dict[str, np.ndarray]) -> int:
 def diagnostic_group_rows(posterior: dict[str, np.ndarray]) -> list[dict[str, object]]:
     """Return grouped diagnostic arrays for compact plotting."""
 
-    parameter_order = ["theta", "b", "a", "tau_theta", "theta_source"]
-    rows: list[dict[str, object]] = []
-    for parameter_name in parameter_order:
-        if parameter_name not in posterior:
-            continue
-        values = posterior[parameter_name]
-        feature_count = int(_flatten_parameter(values).shape[-1])
-        if parameter_name == "theta":
-            label = f"θ\n({feature_count} judges)"
-        elif parameter_name == "b":
-            label = f"b\n({feature_count} items)"
-        elif parameter_name == "a":
-            label = f"a\n({feature_count} items)"
-        elif parameter_name == "tau_theta":
-            label = f"τ_θ\n({feature_count} judges)"
-        else:
-            label = f"θ_source\n({feature_count} source effects)"
-        rows.append(
-            {
-                "parameter": parameter_name,
-                "label": label,
-                "rhat": compute_rhat(values),
-                "ess": compute_ess(values),
-            }
-        )
-    return rows
+    return diagnostic_parameter_rows(posterior)
 
 
 def _stack_offsets(count: int, width: float = 0.28) -> np.ndarray:
@@ -228,10 +265,19 @@ def _diagnostic_ticks(limit: float, include: float | None = None) -> list[float]
 def plot_diagnostics_summary(posterior: dict[str, np.ndarray]) -> plt.Figure:
     """Plot compact grouped R-hat and ESS diagnostics."""
 
-    groups = diagnostic_group_rows(posterior)
+    groups = diagnostic_parameter_rows(posterior)
+    divergence_count = int(np.asarray(posterior.get("diverging", np.array([]))).sum())
+    return plot_diagnostics_summary_rows(groups, divergence_count)
+
+
+def plot_diagnostics_summary_rows(
+    groups: list[dict[str, object]],
+    divergence_count: int,
+) -> plt.Figure:
+    """Plot compact grouped R-hat and ESS diagnostics from computed rows."""
+
     if not groups:
         raise ValueError("Posterior archive does not contain plottable diagnostic parameters.")
-    divergence_count = int(np.asarray(posterior.get("diverging", np.array([]))).sum())
     fig, (rhat_axis, ess_axis) = plt.subplots(
         1,
         2,
@@ -333,12 +379,14 @@ def main() -> None:
             ),
             chain_count,
         )
+    diagnostic_rows = diagnostic_parameter_rows(posterior)
+    divergence_count = int(np.asarray(posterior.get("diverging", np.array([]))).sum())
     summary = summarize_diagnostics(posterior)
     if logger.isEnabledFor(logging.INFO):
         logger.info("diagnostic summary\n%s", format_table_for_log(summary))
     save_figure(
-        plot_diagnostics_summary(posterior),
-        config.figures_dir / "diagnostics_summary",
+        plot_diagnostics_summary_rows(diagnostic_rows, divergence_count),
+        figure_base_path(config.figures_dir, DIAGNOSTICS_SUMMARY_STEM),
     )
 
 

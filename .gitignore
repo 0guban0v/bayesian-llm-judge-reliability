@@ -37,6 +37,7 @@ data/processed/posteriors/*
 !figures/
 !figures/*.png
 !figures/*.pdf
-!figures/diagnostics/
-!figures/diagnostics/*.png
-!figures/diagnostics/*.pdf
+
+*.aux
+*.fdb_latexmk
+*.fls
