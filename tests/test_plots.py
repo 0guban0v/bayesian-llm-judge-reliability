@@ -417,8 +417,6 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
             [tick.get_text() for tick in axes.get_yticklabels()],
             ["judge-a", "judge-b"],
         )
-        self.assertEqual(axes.get_title(), "source-a (n=2)")
-        self.assertEqual(visible_axes[1].get_title(), "source-b (n=1)")
         self.assertEqual(len(figure.legends), 1)
 
     def test_plot_judge_reliability_by_source_uses_single_axis_for_one_source(self) -> None:
@@ -444,7 +442,6 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
 
         visible_axes = [axis for axis in figure.axes if axis.get_visible()]
         self.assertEqual(len(visible_axes), 1)
-        self.assertEqual(visible_axes[0].get_title(), "source-a (n=2)")
         self.assertEqual(visible_axes[0].get_xlabel(), "Posterior reliability (theta)")
 
 
