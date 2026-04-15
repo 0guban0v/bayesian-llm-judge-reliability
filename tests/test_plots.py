@@ -62,15 +62,14 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         self.assertTrue(np.all(judge_means >= 0.0))
         self.assertTrue(np.all(judge_means <= 1.0))
 
-    def test_plot_prior_predictive_probabilities_returns_two_panel_figure(self) -> None:
+    def test_plot_prior_predictive_probabilities_returns_single_panel_figure(self) -> None:
         matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
         config = make_plot_config()
 
         figure = plot_prior_predictive_probabilities(matrix, config, num_draws=20)
 
-        self.assertEqual(len(figure.axes), 2)
-        self.assertEqual(figure.axes[0].get_xlabel(), "Prior predictive P(y=1)")
-        self.assertEqual(figure.axes[1].get_xlabel(), "Prior predictive judge mean accuracy")
+        self.assertEqual(len(figure.axes), 1)
+        self.assertEqual(figure.axes[0].get_xlabel(), "Prior predictive judge mean accuracy")
 
     def test_plot_prior_predictive_probabilities_supports_posterior_overlay(self) -> None:
         matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
@@ -90,8 +89,8 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
             num_draws=20,
         )
 
-        self.assertEqual(len(figure.axes), 2)
-        self.assertGreaterEqual(len(figure.axes[1].patches), 2)
+        self.assertEqual(len(figure.axes), 1)
+        self.assertGreaterEqual(len(figure.axes[0].collections), 1)
 
     def test_prior_predictive_sampling_supports_global_variant(self) -> None:
         matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
@@ -408,7 +407,7 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         axes = figure.axes[0]
         self.assertEqual(
             [tick.get_text() for tick in axes.get_xticklabels()],
-            ["judge-a", "judge-b"],
+            ["judge-a", "\njudge-b"],
         )
         self.assertEqual(
             [tick.get_text() for tick in axes.get_yticklabels()],

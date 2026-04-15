@@ -8,6 +8,7 @@ from typing import Final
 PRIOR_PREDICTIVE_STEM: Final[str] = "prior_predictive_probabilities"
 JUDGE_RELIABILITY_RIDGE_STEM: Final[str] = "judge_reliability_ridge"
 JUDGE_RELIABILITY_BY_SOURCE_STEM: Final[str] = "judge_reliability_by_source"
+DIAGNOSTICS_SUMMARY_STEM: Final[str] = "diagnostics_summary"
 
 
 def figure_base_path(figures_dir: Path, stem: str) -> Path:
