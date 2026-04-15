@@ -11,6 +11,7 @@ import numpy as np
 import polars as pl
 import pymc as pm
 
+from src.data.validate import assert_complete_judge_coverage
 from src.logging_utils import configure_logging, format_table_for_log
 from src.models.irt_common import (
     build_model_priors,
@@ -129,9 +130,7 @@ def _extract_samples(idata: Any, config: ExperimentConfig) -> dict[str, np.ndarr
         samples["a"] = posterior["a"].transpose("chain", "draw", "item").values
     if config.model.variant == "source_hier":
         samples["tau_theta"] = posterior["tau_theta"].transpose("chain", "draw", "judge").values
-        samples["theta_source"] = (
-            posterior["theta_source"].transpose("chain", "draw", "judge", "source").values
-        )
+        samples["theta_source"] = posterior["theta_source"].transpose("chain", "draw", "judge", "source").values
     return {name: np.asarray(values) for name, values in samples.items()}
 
 
@@ -161,9 +160,9 @@ def run_and_save_posterior(config: ExperimentConfig, matrix: pl.DataFrame | None
     """Run PyMC inference and persist posterior samples."""
 
     config.ensure_directories()
-    observations = load_matrix_observations(
-        matrix if matrix is not None else config.data.matrix_path
-    )
+    prepared_matrix = matrix if matrix is not None else pl.read_parquet(config.data.matrix_path)
+    assert_complete_judge_coverage(prepared_matrix, [judge.id for judge in config.judges])
+    observations = load_matrix_observations(prepared_matrix)
     _, samples = run_mcmc(config, observations)
     output_path = config.inference.posterior_path
     save_posterior(

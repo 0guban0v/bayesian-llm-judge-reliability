@@ -17,9 +17,7 @@ class ParseVerdictTests(unittest.TestCase):
         self.assertEqual(parse_verdict("FINAL VERDICT: B"), "B")
 
     def test_parses_verdict_first_response_format(self) -> None:
-        raw_text = (
-            "FINAL VERDICT: A\n- Response A is more accurate.\n- Response B misses a key step."
-        )
+        raw_text = "FINAL VERDICT: A\n- Response A is more accurate.\n- Response B misses a key step."
         self.assertEqual(parse_verdict(raw_text), "A")
 
     def test_parses_after_leading_blank_lines(self) -> None:

@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
+from src.analysis.figure_paths import JUDGE_RELIABILITY_BY_SOURCE_STEM, JUDGE_RELIABILITY_RIDGE_STEM
 from src.analysis.plot_config import JUDGE_COLOR_PINS, SOURCE_COLOR_PINS, source_color_map
 from src.analysis.plots import (
+    cleanup_posterior_figure_outputs,
     judge_color_map,
     ordered_source_ids,
     plot_judge_reliability_by_source,
@@ -309,9 +313,7 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
 
     def test_judge_color_map_fallback_is_deterministic_and_does_not_drift(self) -> None:
         baseline = judge_color_map(np.asarray(["deepseek-r1-distill-qwen-14b", "judge-x"]))
-        expanded = judge_color_map(
-            np.asarray(["deepseek-r1-distill-qwen-14b", "judge-x", "judge-y"])
-        )
+        expanded = judge_color_map(np.asarray(["deepseek-r1-distill-qwen-14b", "judge-x", "judge-y"]))
 
         self.assertEqual(
             baseline["deepseek-r1-distill-qwen-14b"],
@@ -414,6 +416,23 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
             ["source a", "source b"],
         )
         self.assertEqual(len(figure.axes), 2)
+
+    def test_cleanup_posterior_figure_outputs_removes_stale_source_figure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            figures_dir = Path(temp_dir)
+            ridge_path = figures_dir / f"{JUDGE_RELIABILITY_RIDGE_STEM}.png"
+            source_path = figures_dir / f"{JUDGE_RELIABILITY_BY_SOURCE_STEM}.png"
+            ridge_path.write_bytes(b"ridge")
+            source_path.write_bytes(b"source")
+
+            cleanup_posterior_figure_outputs(
+                figures_dir,
+                keep_ridge=True,
+                keep_source=False,
+            )
+
+            self.assertTrue(ridge_path.exists())
+            self.assertFalse(source_path.exists())
 
     def test_plot_judge_reliability_by_source_uses_single_axis_for_one_source(self) -> None:
         matrix = pl.DataFrame(
