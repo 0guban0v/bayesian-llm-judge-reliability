@@ -78,6 +78,21 @@ class ComputeRhatTests(unittest.TestCase):
             ["θ\n(5 judges)", "b\n(3 items)", "a\n(3 items)", "τ_θ\n(5 judges)"],
         )
 
+    def test_diagnostic_group_rows_ignores_unexpected_posterior_keys(self) -> None:
+        posterior = {
+            "theta": np.ones((2, 4, 5)),
+            "b": np.ones((2, 4, 3)),
+            "log_likelihood": np.ones((2, 4, 3)),
+            "diverging_detail": np.ones((2, 4, 3)),
+        }
+
+        rows = diagnostic_group_rows(posterior)
+
+        self.assertEqual(
+            [row["parameter"] for row in rows],
+            ["theta", "b"],
+        )
+
     def test_plot_diagnostics_summary_returns_two_panel_figure(self) -> None:
         posterior = {
             "theta": np.random.default_rng(0).normal(size=(2, 8, 5)),

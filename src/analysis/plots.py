@@ -11,12 +11,13 @@ import numpy as np
 import polars as pl
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-from src.analysis.diagnostics import flatten_draws, load_posterior
+from src.analysis.diagnostics import flatten_draws
 from src.analysis.figure_paths import (
     JUDGE_RELIABILITY_BY_SOURCE_STEM,
     JUDGE_RELIABILITY_RIDGE_STEM,
     PRIOR_PREDICTIVE_STEM,
     figure_base_path,
+    remove_figure_output,
 )
 from src.analysis.plot_config import (
     EXPORT_DPI,
@@ -27,6 +28,7 @@ from src.analysis.plot_config import (
     source_display_label,
     style_axis,
 )
+from src.analysis.posterior_archive import load_posterior
 from src.data.loader import ITEM_METADATA_COLUMNS
 from src.logging_utils import configure_logging
 from src.schemas import ExperimentConfig
@@ -79,6 +81,37 @@ def save_figure(fig: plt.Figure, output_base: Path) -> None:
     plt.close(fig)
 
 
+def has_source_reliability(posterior: dict[str, np.ndarray] | None) -> bool:
+    """Return whether a posterior includes source-specific reliability samples."""
+
+    return posterior is not None and "theta_source" in posterior and "source_ids" in posterior
+
+
+def cleanup_posterior_figure_outputs(
+    figures_dir: Path,
+    *,
+    keep_ridge: bool,
+    keep_source: bool,
+) -> None:
+    """Remove posterior-backed figures that are not valid for current run."""
+
+    if not keep_ridge:
+        remove_figure_output(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM)
+    if not keep_source:
+        remove_figure_output(figures_dir, JUDGE_RELIABILITY_BY_SOURCE_STEM)
+
+
+def validate_posterior_plot_inputs(
+    matrix: pl.DataFrame,
+    posterior: dict[str, np.ndarray],
+) -> None:
+    """Validate matrix and posterior alignment before posterior-backed plotting."""
+
+    matrix_judge_ids, _ = observed_accuracy(matrix)
+    validate_posterior_judge_order(matrix_judge_ids, posterior)
+    validate_posterior_item_alignment(matrix, posterior)
+
+
 def sample_prior_predictive_probabilities(
     matrix: pl.DataFrame,
     config: ExperimentConfig,
@@ -118,9 +151,7 @@ def sample_prior_predictive_probabilities(
     if config.model.variant == "source_hier":
         if priors.tau_theta is None:
             raise ValueError("source_hier prior predictive simulation requires tau_theta")
-        source_ids = (
-            matrix.get_column("source").cast(pl.String).unique(maintain_order=True).to_list()
-        )
+        source_ids = matrix.get_column("source").cast(pl.String).unique(maintain_order=True).to_list()
         source_lookup = {source_id: index for index, source_id in enumerate(source_ids)}
         item_source_idx = np.asarray(
             [source_lookup[source_id] for source_id in matrix.get_column("source").cast(pl.String)],
@@ -183,9 +214,7 @@ def plot_prior_predictive_probabilities(
     if posterior_predictive_overlay is not None and posterior_predictive_overlay.size > 0:
         if posterior_overlay_judge_ids is not None and posterior_overlay_judge_ids.size > 0:
             overlay_color_map = judge_color_map(posterior_overlay_judge_ids)
-            overlay_colors = [
-                overlay_color_map[str(judge_id)] for judge_id in posterior_overlay_judge_ids
-            ]
+            overlay_colors = [overlay_color_map[str(judge_id)] for judge_id in posterior_overlay_judge_ids]
         else:
             overlay_colors = ["#0f4c81"] * posterior_predictive_overlay.size
         for overlay_value, overlay_color in zip(
@@ -235,9 +264,7 @@ def plot_judge_reliability_ridge(
         posterior,
     )
     accuracy_values = np.concatenate([observed, predicted_mean, predictive_lower, predictive_upper])
-    observed_map = {
-        str(judge_id): float(observed[index]) for index, judge_id in enumerate(observed_judge_ids)
-    }
+    observed_map = {str(judge_id): float(observed[index]) for index, judge_id in enumerate(observed_judge_ids)}
     predictive_map = {
         str(judge_id): (
             float(predicted_mean[index]),
@@ -418,12 +445,8 @@ def source_reliability_summary(
 def observed_accuracy(matrix: pl.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """Return judge IDs and observed accuracies from the processed matrix."""
 
-    judge_ids = np.asarray(
-        [column for column in matrix.columns if column not in ITEM_METADATA_COLUMNS]
-    )
-    accuracies = np.asarray(
-        [float(matrix.get_column(judge_id).drop_nulls().mean() or 0.0) for judge_id in judge_ids]
-    )
+    judge_ids = np.asarray([column for column in matrix.columns if column not in ITEM_METADATA_COLUMNS])
+    accuracies = np.asarray([float(matrix.get_column(judge_id).drop_nulls().mean() or 0.0) for judge_id in judge_ids])
     return judge_ids, accuracies
 
 
@@ -462,19 +485,12 @@ def validate_posterior_item_alignment(
     if "theta_source" in posterior and "source_ids" in posterior:
         posterior_source_ids = {str(source_id) for source_id in posterior["source_ids"]}
         matrix_sources = matrix.get_column("source").cast(pl.String).to_list()
-        missing_sources = sorted(
-            {source for source in matrix_sources if source not in posterior_source_ids}
-        )
+        missing_sources = sorted({source for source in matrix_sources if source not in posterior_source_ids})
         if missing_sources:
-            msg = (
-                "Matrix sources are missing from posterior source_ids. "
-                f"missing_sources={missing_sources}"
-            )
+            msg = f"Matrix sources are missing from posterior source_ids. missing_sources={missing_sources}"
             raise ValueError(msg)
     elif "theta_source" in posterior:
-        raise ValueError(
-            "Posterior archive contains theta_source but is missing source_ids required for PPC."
-        )
+        raise ValueError("Posterior archive contains theta_source but is missing source_ids required for PPC.")
 
 
 def posterior_predictive_judge_accuracy(
@@ -489,13 +505,8 @@ def posterior_predictive_judge_accuracy(
     if "theta_source" in posterior and "source_ids" in posterior:
         item_ids = [str(item_id) for item_id in posterior["item_ids"].tolist()]
         item_sources = matrix.select(["item_id", "source"]).unique(subset=["item_id"], keep="first")
-        source_lookup = {
-            str(source_id): index for index, source_id in enumerate(posterior["source_ids"])
-        }
-        source_by_item_id = {
-            str(row["item_id"]): source_lookup[str(row["source"])]
-            for row in item_sources.to_dicts()
-        }
+        source_lookup = {str(source_id): index for index, source_id in enumerate(posterior["source_ids"])}
+        source_by_item_id = {str(row["item_id"]): source_lookup[str(row["source"])] for row in item_sources.to_dicts()}
         item_source_idx = np.asarray(
             [source_by_item_id[item_id] for item_id in item_ids],
             dtype=int,
@@ -531,21 +542,17 @@ def plot_judge_reliability_by_source(
     if not ordered_sources:
         raise ValueError("Source facet plotting requires at least one source.")
     summary = source_reliability_summary(posterior, ordered_sources)
+    summary_sources = summary.get_column("source").cast(pl.String).unique(maintain_order=True).to_list()
+    if summary_sources != ordered_sources:
+        raise ValueError(
+            "Source reliability summary does not match requested source order. "
+            f"summary={summary_sources} requested={ordered_sources}"
+        )
     judge_ids = np.asarray(posterior["judge_ids"], dtype=str)
     global_theta = flatten_draws(posterior["theta"]).mean(axis=0)
     global_ordering = np.argsort(global_theta)[::-1]
     ordered_judge_ids = [str(judge_ids[index]) for index in global_ordering]
-    pivoted = (
-        summary.pivot(on="judge_id", index="source", values="theta_mean")
-        .with_columns(pl.col("source").cast(pl.String))
-        .with_columns(
-            pl.col("source")
-            .replace_strict(ordered_sources, np.arange(len(ordered_sources), dtype=int))
-            .alias("_source_order")
-        )
-        .sort("_source_order")
-        .drop("_source_order")
-    )
+    pivoted = summary.pivot(on="judge_id", index="source", values="theta_mean")
     heatmap = np.column_stack(
         [pivoted.get_column(judge_id).to_numpy().astype(float) for judge_id in ordered_judge_ids]
     ).T
@@ -616,7 +623,8 @@ def main() -> None:
         plot_prior_predictive_probabilities(matrix, config, posterior),
         figure_base_path(figures_dir, PRIOR_PREDICTIVE_STEM),
     )
-    if not posterior_path.exists():
+    if posterior is None:
+        cleanup_posterior_figure_outputs(figures_dir, keep_ridge=False, keep_source=False)
         logger.warning(
             "posterior not found at %s; saved prior predictive figure only to %s",
             posterior_path,
@@ -629,15 +637,22 @@ def main() -> None:
         posterior_path,
         backend,
     )
+    try:
+        validate_posterior_plot_inputs(matrix, posterior)
+    except ValueError:
+        cleanup_posterior_figure_outputs(figures_dir, keep_ridge=False, keep_source=False)
+        raise
     save_figure(
         plot_judge_reliability_ridge(matrix, posterior),
         figure_base_path(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM),
     )
-    if "theta_source" in posterior and "source_ids" in posterior:
+    if has_source_reliability(posterior):
         save_figure(
             plot_judge_reliability_by_source(matrix, posterior),
             figure_base_path(figures_dir, JUDGE_RELIABILITY_BY_SOURCE_STEM),
         )
+    else:
+        cleanup_posterior_figure_outputs(figures_dir, keep_ridge=True, keep_source=False)
     logger.info("saved posterior figures to %s", figures_dir)
 
 

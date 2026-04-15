@@ -12,14 +12,14 @@ def _():
 
     import marimo as mo
     import polars as pl
-    from src.analysis.diagnostics import load_posterior
     from src.analysis.figure_paths import (
         DIAGNOSTICS_SUMMARY_STEM,
         JUDGE_RELIABILITY_BY_SOURCE_STEM,
         JUDGE_RELIABILITY_RIDGE_STEM,
         PRIOR_PREDICTIVE_STEM,
-        figure_base_path,
+        analysis_figure_paths,
     )
+    from src.analysis.posterior_archive import load_posterior
     from src.analysis.posterior_queries import rank_judges
     from src.schemas import ExperimentConfig
 
@@ -30,7 +30,7 @@ def _():
         JUDGE_RELIABILITY_RIDGE_STEM,
         Path,
         PRIOR_PREDICTIVE_STEM,
-        figure_base_path,
+        analysis_figure_paths,
         load_posterior,
         mo,
         pl,
@@ -69,8 +69,7 @@ def _(ExperimentConfig, Path, mo):
 def _(config, config_path, mo, refresh_button, subprocess, sys):
     if not refresh_button.value:
         refresh_status = mo.md(
-            "Use **Refresh analysis** to regenerate diagnostics and plot assets "
-            "from the current code and config."
+            "Use **Refresh analysis** to regenerate diagnostics and plot assets from the current code and config."
         )
     else:
         commands = [
@@ -96,8 +95,7 @@ def _(config, config_path, mo, refresh_button, subprocess, sys):
                 failures.append(f"$ {step_name}\n{stderr}")
         if not failures:
             refresh_status = mo.md(
-                f"Refreshed diagnostics and figures for `{config.experiment.name}` "
-                f"using `{config.model.variant}`."
+                f"Refreshed diagnostics and figures for `{config.experiment.name}` using `{config.model.variant}`."
             )
         else:
             failure_text = "\n\n".join(failures)
@@ -112,7 +110,7 @@ def _(
     JUDGE_RELIABILITY_RIDGE_STEM,
     PRIOR_PREDICTIVE_STEM,
     config,
-    figure_base_path,
+    analysis_figure_paths,
     load_posterior,
     mo,
     pl,
@@ -121,18 +119,21 @@ def _(
     matrix_path = config.data.matrix_path
     posterior_path = config.inference.posterior_path
     figures_dir = config.figures_dir
-    diagnostics_path = figure_base_path(figures_dir, DIAGNOSTICS_SUMMARY_STEM).with_suffix(".png")
-    prior_path = figure_base_path(figures_dir, PRIOR_PREDICTIVE_STEM).with_suffix(".png")
-    ridge_path = figure_base_path(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM).with_suffix(".png")
-    source_figure_path = figure_base_path(
-        figures_dir,
-        JUDGE_RELIABILITY_BY_SOURCE_STEM,
-    ).with_suffix(".png")
+    figure_paths = analysis_figure_paths(figures_dir)
+    diagnostics_path = figure_paths[DIAGNOSTICS_SUMMARY_STEM]
+    prior_path = figure_paths[PRIOR_PREDICTIVE_STEM]
+    ridge_path = figure_paths[JUDGE_RELIABILITY_RIDGE_STEM]
+    source_figure_path = figure_paths[JUDGE_RELIABILITY_BY_SOURCE_STEM]
 
     matrix = pl.read_parquet(matrix_path) if matrix_path.exists() else None
     posterior = load_posterior(posterior_path) if posterior_path.exists() else None
     ranking = rank_judges(posterior) if posterior is not None else None
     posterior_backend = str(posterior.get("backend", "unknown")) if posterior is not None else None
+    source_figure_expected = posterior is not None and "theta_source" in posterior and "source_ids" in posterior
+    ridge_status = "present" if ridge_path.exists() else ("missing" if posterior is not None else "not applicable")
+    source_status = (
+        "present" if source_figure_path.exists() else ("missing" if source_figure_expected else "not applicable")
+    )
 
     status = mo.md(
         f"""
@@ -143,8 +144,8 @@ def _(
         - Posterior backend: `{posterior_backend or "n/a"}`
         - Diagnostics summary: `{"present" if diagnostics_path.exists() else "missing"}`
         - Prior predictive judge-means figure: `{"present" if prior_path.exists() else "missing"}`
-        - Judge reliability figure: `{"present" if ridge_path.exists() else "missing"}`
-        - Source-aware figure: `{"present" if source_figure_path.exists() else "missing"}`
+        - Judge reliability figure: `{ridge_status}`
+        - Source-aware figure: `{source_status}`
         """
     )
     return (
@@ -207,13 +208,14 @@ def _(config_path, image_panel, mo, ridge_path):
 
 
 @app.cell
-def _(image_panel, mo, source_figure_path):
+def _(image_panel, mo, posterior, source_figure_path):
+    source_figure_expected = posterior is not None and "theta_source" in posterior and "source_ids" in posterior
     if source_figure_path.exists():
         source_panel = image_panel("Source-Aware Figure", source_figure_path)
+    elif source_figure_expected:
+        source_panel = mo.md("## Source-Aware Figure\nExpected for current posterior, but asset is missing.")
     else:
-        source_panel = mo.md(
-            "## Source-Aware Figure\nNo source-aware figure generated for this run."
-        )
+        source_panel = mo.md("## Source-Aware Figure\nNot generated for current posterior and config.")
     return (source_panel,)
 
 

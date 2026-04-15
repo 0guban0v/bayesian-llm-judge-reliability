@@ -83,16 +83,10 @@ def fallback_plot_color(name: str) -> str:
 def judge_color_map(judge_ids: np.ndarray) -> dict[str, str]:
     """Return stable colors for each judge ID."""
 
-    return {
-        judge_id: JUDGE_COLOR_PINS.get(judge_id, fallback_plot_color(judge_id))
-        for judge_id in map(str, judge_ids)
-    }
+    return {judge_id: JUDGE_COLOR_PINS.get(judge_id, fallback_plot_color(judge_id)) for judge_id in map(str, judge_ids)}
 
 
 def source_color_map(source_ids: list[str]) -> dict[str, str]:
     """Return stable colors for each source ID."""
 
-    return {
-        source_id: SOURCE_COLOR_PINS.get(source_id, fallback_plot_color(source_id))
-        for source_id in source_ids
-    }
+    return {source_id: SOURCE_COLOR_PINS.get(source_id, fallback_plot_color(source_id)) for source_id in source_ids}

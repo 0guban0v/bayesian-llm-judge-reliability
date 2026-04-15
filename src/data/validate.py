@@ -83,8 +83,7 @@ def assert_complete_judge_coverage(matrix: pl.DataFrame, expected_judges: list[s
         for row in incomplete.select(["judge_id", "responded_items"]).to_dicts()
     )
     raise ValueError(
-        "Inference requires complete judge coverage for all configured judges. "
-        f"Incomplete judges: {details}"
+        f"Inference requires complete judge coverage for all configured judges. Incomplete judges: {details}"
     )
 
 

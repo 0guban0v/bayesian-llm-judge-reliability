@@ -62,10 +62,7 @@ def _matches_category_token_sequences(
 
     if not category_token_sequences:
         return True
-    return any(
-        _contains_token_sequence(source_tokens, category_tokens)
-        for category_tokens in category_token_sequences
-    )
+    return any(_contains_token_sequence(source_tokens, category_tokens) for category_tokens in category_token_sequences)
 
 
 def _matches_categories(source: str, categories: list[str]) -> bool:
@@ -116,9 +113,7 @@ def _dataset_to_frame(dataset_name: str, split_name: str) -> pl.DataFrame:
 def load_judgebench_frame(config: ExperimentConfig) -> pl.DataFrame:
     """Load and filter JudgeBench according to config."""
 
-    frames = [
-        _dataset_to_frame(config.data.hf_dataset, split_name) for split_name in config.data.splits
-    ]
+    frames = [_dataset_to_frame(config.data.hf_dataset, split_name) for split_name in config.data.splits]
     combined = pl.concat(frames, how="vertical")
     category_token_sequences = _compile_category_token_sequences(config.data.categories)
     if not config.data.categories:
@@ -187,19 +182,14 @@ def build_binary_matrix(
 ) -> pl.DataFrame:
     """Build an item-by-judge correctness matrix from original-order logs."""
 
-    original_logs = logs.filter(
-        pl.col("prompt_order").eq("original") & pl.col("correct").is_not_null()
-    ).with_columns(pl.col("correct").cast(pl.Int8).alias("correct_int"))
-
-    duplicate_judgments = (
-        original_logs.group_by(["item_id", "judge_id"]).len().filter(pl.col("len") > 1)
+    original_logs = logs.filter(pl.col("prompt_order").eq("original") & pl.col("correct").is_not_null()).with_columns(
+        pl.col("correct").cast(pl.Int8).alias("correct_int")
     )
+
+    duplicate_judgments = original_logs.group_by(["item_id", "judge_id"]).len().filter(pl.col("len") > 1)
     if duplicate_judgments.height > 0:
         logger.warning(
-            (
-                "duplicate original-order judgments detected; "
-                "keeping first result per item/judge pair duplicates=%s"
-            ),
+            ("duplicate original-order judgments detected; keeping first result per item/judge pair duplicates=%s"),
             duplicate_judgments.select(["item_id", "judge_id", "len"]).to_dicts(),
         )
 

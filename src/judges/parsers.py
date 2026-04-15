@@ -94,6 +94,4 @@ def parse_correctness(verdict: ParsedVerdict, label: str) -> bool | None:
     canonical_label = normalize_label(label)
     if verdict not in {"A", "B"}:
         return None
-    return (verdict == "A" and canonical_label == "A>B") or (
-        verdict == "B" and canonical_label == "B>A"
-    )
+    return (verdict == "A" and canonical_label == "A>B") or (verdict == "B" and canonical_label == "B>A")

@@ -31,7 +31,7 @@ repos:
 
       - id: dead-code
         name: dead code
-        entry: uv run vulture src tests tests/vulture_whitelist.py
+        entry: uv run vulture src tests notebooks tests/vulture_whitelist.py --ignore-names "_,__generated_with"
         language: system
         pass_filenames: false
         stages: [pre-commit]
