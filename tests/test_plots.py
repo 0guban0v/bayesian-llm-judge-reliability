@@ -7,17 +7,15 @@ from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
+from src.analysis.plot_config import JUDGE_COLOR_PINS, SOURCE_COLOR_PINS, source_color_map
 from src.analysis.plots import (
-    JUDGE_COLOR_PINS,
-    SOURCE_COLOR_PINS,
     judge_color_map,
     ordered_source_ids,
     plot_judge_reliability_by_source,
-    plot_posterior_predictive_check,
+    plot_judge_reliability_ridge,
     plot_prior_predictive_probabilities,
     posterior_predictive_judge_accuracy,
     sample_prior_predictive_probabilities,
-    source_color_map,
     source_reliability_summary,
     stable_sigmoid,
     top_source_ids,
@@ -73,6 +71,27 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         self.assertEqual(len(figure.axes), 2)
         self.assertEqual(figure.axes[0].get_xlabel(), "Prior predictive P(y=1)")
         self.assertEqual(figure.axes[1].get_xlabel(), "Prior predictive judge mean accuracy")
+
+    def test_plot_prior_predictive_probabilities_supports_posterior_overlay(self) -> None:
+        matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
+        config = make_plot_config(variant="global")
+        posterior = {
+            "item_ids": np.asarray(["item-1", "item-2"]),
+            "judge_ids": np.asarray(["judge-a", "judge-b"]),
+            "theta": np.asarray([[[1.0, -1.0]]]),
+            "b": np.asarray([[[0.0, 0.0]]]),
+            "a": np.asarray([[[1.0, 1.0]]]),
+        }
+
+        figure = plot_prior_predictive_probabilities(
+            matrix,
+            config,
+            posterior,
+            num_draws=20,
+        )
+
+        self.assertEqual(len(figure.axes), 2)
+        self.assertGreaterEqual(len(figure.axes[1].patches), 2)
 
     def test_prior_predictive_sampling_supports_global_variant(self) -> None:
         matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
@@ -245,33 +264,7 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         ):
             validate_posterior_judge_order(matrix_judge_ids, posterior)
 
-    def test_plot_posterior_predictive_check_rejects_misaligned_judges(self) -> None:
-        matrix = pl.DataFrame(
-            {
-                "item_id": ["item-1"],
-                "label": ["A>B"],
-                "original_id": [1],
-                "question": ["q1"],
-                "source": ["s1"],
-                "split": ["gpt"],
-                "judge-a": [1],
-                "judge-b": [0],
-            }
-        )
-        posterior = {
-            "judge_ids": np.asarray(["judge-b", "judge-a"]),
-            "theta": np.asarray([[[1.0, -1.0]]]),
-            "b": np.asarray([[[0.0]]]),
-            "a": np.asarray([[[1.0]]]),
-        }
-
-        with self.assertRaisesRegex(
-            ValueError,
-            "Posterior judge order does not match matrix judge column order",
-        ):
-            plot_posterior_predictive_check(matrix, posterior)
-
-    def test_plot_posterior_predictive_check_uses_single_judge_legend(self) -> None:
+    def test_plot_judge_reliability_ridge_uses_inline_accuracy_panel(self) -> None:
         matrix = pl.DataFrame(
             {
                 "item_id": ["item-1", "item-2"],
@@ -292,10 +285,13 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
             "a": np.asarray([[[1.0, 1.0]]]),
         }
 
-        figure = plot_posterior_predictive_check(matrix, posterior)
+        figure = plot_judge_reliability_ridge(matrix, posterior)
 
-        self.assertEqual(len(figure.legends), 1)
-        self.assertEqual(figure.legends[0].get_title().get_text(), "Judges")
+        self.assertEqual(len(figure.axes), 2)
+        self.assertEqual(figure.axes[0].get_xlabel(), "Posterior reliability (theta)")
+        self.assertEqual(figure.axes[1].get_xlabel(), "Accuracy")
+        self.assertEqual(len(figure.legends), 0)
+        self.assertNotEqual(tuple(figure.axes[1].get_xlim()), (0.0, 1.0))
 
     def test_judge_color_map_uses_pinned_colors_for_known_models(self) -> None:
         judge_ids = np.asarray(
@@ -409,17 +405,16 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         self.assertEqual(ordered, ["source-a", "source-b"])
         self.assertEqual(summary.height, 4)
         self.assertEqual(summary.get_column("source").to_list()[:2], ["source-a", "source-a"])
-        visible_axes = [axis for axis in figure.axes if axis.get_visible()]
-        self.assertEqual(len(figure.axes), 2)
-        self.assertEqual(len(visible_axes), 2)
-        axes = visible_axes[0]
+        axes = figure.axes[0]
         self.assertEqual(
-            [tick.get_text() for tick in axes.get_yticklabels()],
+            [tick.get_text() for tick in axes.get_xticklabels()],
             ["judge-a", "judge-b"],
         )
-        self.assertEqual(axes.get_title(), "source-a (n=2)")
-        self.assertEqual(visible_axes[1].get_title(), "source-b (n=1)")
-        self.assertEqual(len(figure.legends), 1)
+        self.assertEqual(
+            [tick.get_text() for tick in axes.get_yticklabels()],
+            ["source a", "source b"],
+        )
+        self.assertEqual(len(figure.axes), 2)
 
     def test_plot_judge_reliability_by_source_uses_single_axis_for_one_source(self) -> None:
         matrix = pl.DataFrame(
@@ -442,10 +437,11 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
 
         figure = plot_judge_reliability_by_source(matrix, posterior)
 
-        visible_axes = [axis for axis in figure.axes if axis.get_visible()]
-        self.assertEqual(len(visible_axes), 1)
-        self.assertEqual(visible_axes[0].get_title(), "source-a (n=2)")
-        self.assertEqual(visible_axes[0].get_xlabel(), "Posterior reliability (theta)")
+        axes = figure.axes[0]
+        self.assertEqual(
+            [tick.get_text() for tick in axes.get_yticklabels()],
+            ["source a"],
+        )
 
 
 if __name__ == "__main__":
