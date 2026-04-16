@@ -48,6 +48,12 @@ SOURCE_LABEL_PINS = {
 }
 
 
+def judge_display_label(judge_id: str) -> str:
+    """Return a compact display label for a judge identifier."""
+
+    return JUDGE_LABEL_PINS.get(judge_id, judge_id)
+
+
 def source_display_label(source_id: str) -> str:
     """Return a compact display label for a source identifier."""
 

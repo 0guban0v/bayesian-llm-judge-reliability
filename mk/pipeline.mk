@@ -1,4 +1,4 @@
-.PHONY: recommend-models verify-models setup-models items items-refresh judge matrix validate infer diagnostics plots notebook full
+.PHONY: recommend-models verify-models setup-models items items-refresh judge matrix validate infer diagnostics plots report-exports notebook full
 
 recommend-models:
 	@$(call run_and_log,recommend_models,bash scripts/recommend_models.sh)
@@ -33,6 +33,9 @@ diagnostics:
 plots:
 	@$(call run_and_log,plots,$(UV) run python -m src.analysis.plots --config $(CONFIG))
 
+report-exports:
+	@$(call run_and_log,report_exports,$(UV) run python -m src.analysis.report_exports --config $(CONFIG))
+
 notebook:
 	@$(UV) run marimo edit notebooks/results.py
 
@@ -44,3 +47,4 @@ full:
 	@$(MAKE) infer CONFIG=$(CONFIG)
 	@$(MAKE) diagnostics CONFIG=$(CONFIG)
 	@$(MAKE) plots CONFIG=$(CONFIG)
+	@$(MAKE) report-exports CONFIG=$(CONFIG)
