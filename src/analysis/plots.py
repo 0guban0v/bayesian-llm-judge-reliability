@@ -618,7 +618,16 @@ def main() -> None:
     matrix = pl.read_parquet(config.data.matrix_path)
     figures_dir = config.figures_dir
     figures_dir.mkdir(parents=True, exist_ok=True)
-    posterior = load_posterior(posterior_path) if posterior_path.exists() else None
+    posterior: dict[str, np.ndarray] | None = None
+    if posterior_path.exists():
+        try:
+            posterior = load_posterior(posterior_path)
+        except ValueError as exc:
+            logger.warning(
+                "posterior archive at %s failed validation (%s); treating as missing",
+                posterior_path,
+                exc,
+            )
     save_figure(
         plot_prior_predictive_probabilities(matrix, config, posterior),
         figure_base_path(figures_dir, PRIOR_PREDICTIVE_STEM),
