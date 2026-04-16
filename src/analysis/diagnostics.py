@@ -13,21 +13,12 @@ from matplotlib.ticker import FuncFormatter
 
 from src.analysis.figure_paths import DIAGNOSTICS_SUMMARY_STEM, figure_base_path
 from src.analysis.plot_config import EXPORT_DPI, style_axis
+from src.analysis.posterior_archive import load_posterior
 from src.logging_utils import configure_logging, format_table_for_log
 from src.schemas import ExperimentConfig
 
-POSTERIOR_METADATA_KEYS = {
-    "judge_ids",
-    "item_ids",
-    "source_ids",
-    "diverging",
-    "model_type",
-    "n_obs",
-    "backend",
-    "experiment_seed",
-    "num_chains",
-}
 logger = logging.getLogger(__name__)
+DIAGNOSTIC_PARAMETER_ORDER = ["theta", "b", "a", "tau_theta", "theta_source"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,13 +27,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True, help="Path to the experiment YAML.")
     return parser.parse_args()
-
-
-def load_posterior(path: Path) -> dict[str, np.ndarray]:
-    """Load a saved posterior archive."""
-
-    with np.load(path, allow_pickle=False) as data:
-        return {name: data[name] for name in data.files}
 
 
 def _flatten_parameter(samples: np.ndarray) -> np.ndarray:
@@ -121,10 +105,7 @@ def compute_ess(samples: np.ndarray) -> np.ndarray:
     ess = np.empty(features, dtype=float)
     for feature_index in range(features):
         acov = np.mean(
-            [
-                _autocorrelation_1d(flattened[chain_index, :, feature_index])
-                for chain_index in range(chains)
-            ],
+            [_autocorrelation_1d(flattened[chain_index, :, feature_index]) for chain_index in range(chains)],
             axis=0,
         )
         positive_sum = 0.0
@@ -173,14 +154,7 @@ def _parameter_label(parameter_name: str, values: np.ndarray) -> str:
 def diagnostic_parameter_rows(posterior: dict[str, np.ndarray]) -> list[dict[str, object]]:
     """Compute per-parameter diagnostics once for summaries and figures."""
 
-    parameter_order = ["theta", "b", "a", "tau_theta", "theta_source"]
-    available_parameters = [
-        name for name in posterior if name not in POSTERIOR_METADATA_KEYS and name != "diverging"
-    ]
-    ordered_parameters = [
-        *[name for name in parameter_order if name in available_parameters],
-        *sorted(name for name in available_parameters if name not in parameter_order),
-    ]
+    ordered_parameters = [name for name in DIAGNOSTIC_PARAMETER_ORDER if name in posterior]
     rows: list[dict[str, object]] = []
     for parameter_name in ordered_parameters:
         values = posterior[parameter_name]
@@ -212,21 +186,13 @@ def summarize_diagnostic_rows(rows: list[dict[str, object]], divergences: int) -
     ).sort("parameter")
 
 
-def summarize_diagnostics(posterior: dict[str, np.ndarray]) -> pl.DataFrame:
-    """Build a compact diagnostic summary table."""
-
-    divergences = int(np.asarray(posterior.get("diverging", np.array([]))).sum())
-    return summarize_diagnostic_rows(diagnostic_parameter_rows(posterior), divergences)
-
-
 def infer_chain_count(posterior: dict[str, np.ndarray]) -> int:
-    """Infer the number of chains from the first posterior parameter array."""
+    """Infer the number of chains from the first plottable posterior parameter array."""
 
-    for name, values in posterior.items():
-        if name in POSTERIOR_METADATA_KEYS or name == "diverging":
-            continue
-        return int(values.shape[0])
-    raise ValueError("Posterior archive does not contain any parameter arrays.")
+    for name in DIAGNOSTIC_PARAMETER_ORDER:
+        if name in posterior:
+            return int(posterior[name].shape[0])
+    raise ValueError("Posterior archive does not contain any plottable parameter arrays.")
 
 
 def diagnostic_group_rows(posterior: dict[str, np.ndarray]) -> list[dict[str, object]]:
@@ -381,7 +347,7 @@ def main() -> None:
         )
     diagnostic_rows = diagnostic_parameter_rows(posterior)
     divergence_count = int(np.asarray(posterior.get("diverging", np.array([]))).sum())
-    summary = summarize_diagnostics(posterior)
+    summary = summarize_diagnostic_rows(diagnostic_rows, divergence_count)
     if logger.isEnabledFor(logging.INFO):
         logger.info("diagnostic summary\n%s", format_table_for_log(summary))
     save_figure(

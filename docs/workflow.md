@@ -30,12 +30,11 @@ make full
 
 `make diagnostics` writes `figures/diagnostics_summary.png`.
 
-`make plots` always regenerates:
+`make plots` always regenerates `figures/prior_predictive_probabilities.png`.
 
-- `figures/prior_predictive_probabilities.png`
-- `figures/judge_reliability_ridge.png`
+If a compatible posterior archive is present, it also regenerates `figures/judge_reliability_ridge.png`.
 
-If the posterior archive includes `theta_source` and `source_ids` from the `source_hier` model variant, `make plots` also writes `figures/judge_reliability_by_source.png`.
+If the posterior archive includes `theta_source` and `source_ids` from the `source_hier` model variant, `make plots` also writes `figures/judge_reliability_by_source.png`. Posterior-backed figures that are not valid for current run are removed so notebook status matches current artifacts.
 
 ## Stepwise Run
 

@@ -46,9 +46,7 @@ class ModelVerificationResult(BaseModel):
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
 
-    parser = argparse.ArgumentParser(
-        description="Verify MLX model IDs for this repo's constrained verdict decoder."
-    )
+    parser = argparse.ArgumentParser(description="Verify MLX model IDs for this repo's constrained verdict decoder.")
     parser.add_argument(
         "models",
         nargs="*",
@@ -165,9 +163,7 @@ def verify_model(model_name: str, trust_remote_code: bool) -> ModelVerificationR
 def configure_logging(json_output: bool) -> None:
     """Configure CLI logging."""
 
-    log_format = (
-        "%(message)s" if json_output else "%(asctime)s %(levelname)s [verify_models] %(message)s"
-    )
+    log_format = "%(message)s" if json_output else "%(asctime)s %(levelname)s [verify_models] %(message)s"
     logging.basicConfig(
         level=logging.INFO,
         format=log_format,
@@ -180,10 +176,7 @@ def log_result(result: ModelVerificationResult) -> None:
 
     status = "PASS" if result.supported else "FAIL"
     LOGGER.info(
-        (
-            "%s model=%s trust_remote_code=%s loadable=%s chat_template=%s "
-            "a_ids=%s b_ids=%s verdict_ids=%s eos_ids=%s"
-        ),
+        ("%s model=%s trust_remote_code=%s loadable=%s chat_template=%s a_ids=%s b_ids=%s verdict_ids=%s eos_ids=%s"),
         status,
         result.model,
         result.trust_remote_code,
@@ -219,9 +212,7 @@ def main() -> None:
     else:
         config = ExperimentConfig.from_yaml(args.config)
         requests = unique_model_requests(config.judges)
-    results = [
-        verify_model(model_name, trust_remote_code) for model_name, trust_remote_code in requests
-    ]
+    results = [verify_model(model_name, trust_remote_code) for model_name, trust_remote_code in requests]
 
     if args.json:
         LOGGER.info("%s", json.dumps([result.model_dump() for result in results], indent=2))

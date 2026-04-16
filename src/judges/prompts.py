@@ -59,9 +59,7 @@ def format_prompt(
         template = PROMPT_TEMPLATES[template_name]
     except KeyError as exc:
         supported = ", ".join(sorted(PROMPT_TEMPLATES))
-        raise ValueError(
-            f"Unknown prompt template '{template_name}'. Supported: {supported}"
-        ) from exc
+        raise ValueError(f"Unknown prompt template '{template_name}'. Supported: {supported}") from exc
     judge_input = JudgeInput(
         question=question,
         response_a=response_a,

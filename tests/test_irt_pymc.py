@@ -5,11 +5,13 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
-from src.analysis.diagnostics import load_posterior
+import polars as pl
+from src.analysis.posterior_archive import load_posterior
 from src.models.irt_common import save_posterior
-from src.models.irt_pymc import run_mcmc
+from src.models.irt_pymc import run_and_save_posterior, run_mcmc
 from src.schemas import ExperimentConfig, PriorConfig
 
 
@@ -66,6 +68,31 @@ class PyMCModelTests(unittest.TestCase):
         self.assertNotIn("theta_source", samples)
         self.assertEqual(samples["theta"].shape[:2], (1, 4))
 
+    def test_run_and_save_posterior_rejects_incomplete_judge_coverage(self) -> None:
+        config = self._make_config()
+        config.judges = [
+            config.judges[0].model_copy(update={"id": "judge-a"}),
+            config.judges[1].model_copy(update={"id": "judge-b"}),
+        ]
+        matrix = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2"],
+                "label": ["A>B", "B>A"],
+                "original_id": [1, 2],
+                "question": ["q1", "q2"],
+                "source": ["source-a", "source-b"],
+                "split": ["gpt", "gpt"],
+                "judge-a": [1, 0],
+                "judge-b": [1, None],
+            }
+        )
+
+        with patch("src.models.irt_pymc.run_mcmc") as run_mcmc_mock:
+            with self.assertRaisesRegex(ValueError, "complete judge coverage|Incomplete judges"):
+                run_and_save_posterior(config, matrix)
+
+        run_mcmc_mock.assert_not_called()
+
     def test_saved_archive_round_trips_with_expected_metadata(self) -> None:
         config = self._make_config()
         observations = self._make_observations()
@@ -96,6 +123,7 @@ class PyMCModelTests(unittest.TestCase):
             "n_obs",
             "experiment_seed",
             "num_chains",
+            "posterior_schema_version",
             "diverging",
             "theta",
             "b",
@@ -106,6 +134,7 @@ class PyMCModelTests(unittest.TestCase):
             self.assertIn(key, posterior)
         self.assertEqual(str(posterior["backend"]), "pymc")
         self.assertEqual(int(posterior["num_chains"]), samples["theta"].shape[0])
+        self.assertEqual(int(posterior["posterior_schema_version"]), 1)
         self.assertEqual(int(posterior["n_obs"]), len(observations["correct"]))
         self.assertEqual(posterior["theta"].shape[:2], samples["theta"].shape[:2])
         self.assertEqual(posterior["theta_source"].shape[:2], samples["theta_source"].shape[:2])

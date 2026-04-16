@@ -46,11 +46,7 @@ def build_metrics_path(
 ) -> Path:
     """Return the metrics JSON path for a profile or metrics-only run."""
 
-    metrics_dir = (
-        profile_path.parent / "metrics"
-        if profile_path is not None
-        else Path("profiles") / "metrics"
-    )
+    metrics_dir = profile_path.parent / "metrics" if profile_path is not None else Path("profiles") / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     if profile_path is not None:
         metrics_stem = profile_path.stem
