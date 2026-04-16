@@ -1,7 +1,10 @@
-.PHONY: sync lint format dead-code quality test pre-commit-install pre-commit-run
+.PHONY: sync unlock lint format dead-code quality test pre-commit-install pre-commit-run
 
 sync:
 	@$(UV) sync
+
+unlock:
+	@$(UV) lock --upgrade
 
 lint:
 	@$(UV) run ruff check src tests notebooks scripts --fix
@@ -10,7 +13,7 @@ format:
 	@$(UV) run ruff format src tests notebooks scripts
 
 dead-code:
-	@$(UV) run vulture src tests tests/vulture_whitelist.py
+	@$(UV) run vulture src tests notebooks tests/vulture_whitelist.py --ignore-names "_,__generated_with"
 
 quality:
 	@$(MAKE) lint

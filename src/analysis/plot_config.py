@@ -48,6 +48,12 @@ SOURCE_LABEL_PINS = {
 }
 
 
+def judge_display_label(judge_id: str) -> str:
+    """Return a compact display label for a judge identifier."""
+
+    return JUDGE_LABEL_PINS.get(judge_id, judge_id)
+
+
 def source_display_label(source_id: str) -> str:
     """Return a compact display label for a source identifier."""
 
@@ -83,16 +89,10 @@ def fallback_plot_color(name: str) -> str:
 def judge_color_map(judge_ids: np.ndarray) -> dict[str, str]:
     """Return stable colors for each judge ID."""
 
-    return {
-        judge_id: JUDGE_COLOR_PINS.get(judge_id, fallback_plot_color(judge_id))
-        for judge_id in map(str, judge_ids)
-    }
+    return {judge_id: JUDGE_COLOR_PINS.get(judge_id, fallback_plot_color(judge_id)) for judge_id in map(str, judge_ids)}
 
 
 def source_color_map(source_ids: list[str]) -> dict[str, str]:
     """Return stable colors for each source ID."""
 
-    return {
-        source_id: SOURCE_COLOR_PINS.get(source_id, fallback_plot_color(source_id))
-        for source_id in source_ids
-    }
+    return {source_id: SOURCE_COLOR_PINS.get(source_id, fallback_plot_color(source_id)) for source_id in source_ids}

@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import polars as pl
 
+from src.analysis.posterior_archive import POSTERIOR_SCHEMA_VERSION
 from src.data.loader import ITEM_METADATA_COLUMNS
 from src.schemas import IRTConfig
 
@@ -67,9 +68,7 @@ def load_matrix_observations(matrix: pl.DataFrame | Path) -> dict[str, Any]:
     """Convert a wide item-by-judge matrix into long-form IRT observations."""
 
     prepared_matrix = pl.read_parquet(matrix) if isinstance(matrix, Path) else matrix
-    judge_ids = [
-        column for column in prepared_matrix.columns if column not in ITEM_METADATA_COLUMNS
-    ]
+    judge_ids = [column for column in prepared_matrix.columns if column not in ITEM_METADATA_COLUMNS]
     item_ids = prepared_matrix.get_column("item_id").to_list()
     source_ids = prepared_matrix.get_column("source").unique(maintain_order=True).to_list()
     item_lookup = pl.DataFrame(
@@ -136,6 +135,7 @@ def save_posterior(
         "source_ids": observations["source_ids"],
         "model_type": np.asarray(model_type),
         "n_obs": np.asarray(observations["correct"].shape[0]),
+        "posterior_schema_version": np.asarray(POSTERIOR_SCHEMA_VERSION),
     }
     if metadata is not None:
         payload.update(metadata)

@@ -140,18 +140,12 @@ class ExperimentConfig(BaseModel):
         with config_path.open("r", encoding="utf-8") as handle:
             payload = yaml.safe_load(handle)
         config = cls.model_validate(payload)
-        project_root = (
-            config_path.parent.parent
-            if config_path.parent.name == "configs"
-            else config_path.parent
-        )
+        project_root = config_path.parent.parent if config_path.parent.name == "configs" else config_path.parent
         config._project_root = project_root
         config.data.output_dir = _resolve_project_path(project_root, config.data.output_dir)
         config.data.raw_dir = _resolve_project_path(project_root, config.data.raw_dir)
         config.data.logs_dir = _resolve_project_path(project_root, config.data.logs_dir)
-        config.inference.output_dir = _resolve_project_path(
-            project_root, config.inference.output_dir
-        )
+        config.inference.output_dir = _resolve_project_path(project_root, config.inference.output_dir)
         return config
 
     @property

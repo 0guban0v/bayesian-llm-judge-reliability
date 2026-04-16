@@ -103,9 +103,7 @@ def judge_item(
     correct = parse_correctness(verdict, item["label"])
     parsed_verdict = verdict if verdict != "UNKNOWN" else None
     assert prompt_order in {"original", "reversed"}
-    parsed_verdict_literal = (
-        cast(Literal["A", "B"], parsed_verdict) if parsed_verdict is not None else None
-    )
+    parsed_verdict_literal = cast(Literal["A", "B"], parsed_verdict) if parsed_verdict is not None else None
     return JudgeResult(
         item_id=item["item_id"],
         judge_id=judge.id,
