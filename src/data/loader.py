@@ -11,6 +11,11 @@ from pathlib import Path
 import polars as pl
 from datasets import load_dataset
 
+from src.data.matrix_semantics import (
+    ITEM_METADATA_COLUMNS,
+    first_original_judgments,
+    pivot_original_judgments,
+)
 from src.logging_utils import configure_logging
 from src.schemas import ExperimentConfig
 
@@ -27,7 +32,6 @@ ITEM_COLUMNS = [
     "response_b",
     "label",
 ]
-ITEM_METADATA_COLUMNS = {"item_id", "original_id", "split", "source", "question", "label"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -182,26 +186,11 @@ def build_binary_matrix(
 ) -> pl.DataFrame:
     """Build an item-by-judge correctness matrix from original-order logs."""
 
-    original_logs = logs.filter(pl.col("prompt_order").eq("original") & pl.col("correct").is_not_null()).with_columns(
-        pl.col("correct").cast(pl.Int8).alias("correct_int")
-    )
-
-    duplicate_judgments = original_logs.group_by(["item_id", "judge_id"]).len().filter(pl.col("len") > 1)
-    if duplicate_judgments.height > 0:
-        logger.warning(
-            ("duplicate original-order judgments detected; keeping first result per item/judge pair duplicates=%s"),
-            duplicate_judgments.select(["item_id", "judge_id", "len"]).to_dicts(),
-        )
-
-    if original_logs.height == 0:
+    first_judgments = first_original_judgments(logs, duplicate_logger=logger)
+    if first_judgments.height == 0:
         matrix = items.select(sorted(ITEM_METADATA_COLUMNS))
     else:
-        pivoted = original_logs.pivot(
-            index="item_id",
-            on="judge_id",
-            values="correct_int",
-            aggregate_function="first",
-        )
+        pivoted = pivot_original_judgments(first_judgments)
         matrix = items.select(sorted(ITEM_METADATA_COLUMNS)).join(pivoted, on="item_id", how="left")
 
     for judge_id in judge_ids:

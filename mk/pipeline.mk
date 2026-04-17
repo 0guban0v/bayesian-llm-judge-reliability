@@ -1,4 +1,4 @@
-.PHONY: recommend-models verify-models setup-models items items-refresh judge matrix validate infer diagnostics plots report-exports notebook full
+.PHONY: recommend-models verify-models setup-models items items-refresh judge matrix validate infer diagnostics plots report-exports full
 
 recommend-models:
 	@$(call run_and_log,recommend_models,bash scripts/recommend_models.sh)
@@ -35,9 +35,6 @@ plots:
 
 report-exports:
 	@$(call run_and_log,report_exports,$(UV) run python -m src.analysis.report_exports --config $(CONFIG))
-
-notebook:
-	@$(UV) run marimo edit notebooks/results.py
 
 full:
 	@$(MAKE) items CONFIG=$(CONFIG)

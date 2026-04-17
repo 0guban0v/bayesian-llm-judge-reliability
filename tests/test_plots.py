@@ -9,20 +9,28 @@ from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
-from src.analysis.figure_paths import JUDGE_RELIABILITY_BY_SOURCE_STEM, JUDGE_RELIABILITY_RIDGE_STEM
-from src.analysis.plot_config import JUDGE_COLOR_PINS, SOURCE_COLOR_PINS, source_color_map
+from src.analysis.figure_paths import (
+    JUDGE_ACCURACY_PPC_STEM,
+    JUDGE_RELIABILITY_BY_SOURCE_STEM,
+    JUDGE_RELIABILITY_RIDGE_STEM,
+)
+from src.analysis.plot_config import JUDGE_COLOR_PINS, SOURCE_COLOR_PINS, judge_color_map, source_color_map
 from src.analysis.plots import (
     cleanup_posterior_figure_outputs,
-    judge_color_map,
-    ordered_source_ids,
+    plot_judge_accuracy_ppc,
     plot_judge_reliability_by_source,
     plot_judge_reliability_ridge,
     plot_prior_predictive_probabilities,
-    posterior_predictive_judge_accuracy,
     sample_prior_predictive_probabilities,
-    source_reliability_summary,
     stable_sigmoid,
+)
+from src.analysis.posterior_utils import (
+    judge_accuracy_ppc_summaries,
+    observed_accuracy,
+    ordered_source_ids,
+    source_reliability_summary,
     top_source_ids,
+    validate_judge_accuracy_ppc_summaries,
     validate_posterior_judge_order,
 )
 
@@ -47,7 +55,7 @@ def make_plot_config(*, model_type: str = "2PL", variant: str = "source_hier") -
 
 
 class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
-    """Verify posterior predictive judge accuracy stays on the probability scale."""
+    """Verify posterior predictive plot helpers stay on the probability scale."""
 
     def test_prior_predictive_sampling_returns_probability_scale_outputs(self) -> None:
         matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
@@ -74,27 +82,7 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
 
         self.assertEqual(len(figure.axes), 1)
         self.assertEqual(figure.axes[0].get_xlabel(), "Prior predictive judge mean accuracy")
-
-    def test_plot_prior_predictive_probabilities_supports_posterior_overlay(self) -> None:
-        matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
-        config = make_plot_config(variant="global")
-        posterior = {
-            "item_ids": np.asarray(["item-1", "item-2"]),
-            "judge_ids": np.asarray(["judge-a", "judge-b"]),
-            "theta": np.asarray([[[1.0, -1.0]]]),
-            "b": np.asarray([[[0.0, 0.0]]]),
-            "a": np.asarray([[[1.0, 1.0]]]),
-        }
-
-        figure = plot_prior_predictive_probabilities(
-            matrix,
-            config,
-            posterior,
-            num_draws=20,
-        )
-
-        self.assertEqual(len(figure.axes), 1)
-        self.assertGreaterEqual(len(figure.axes[0].collections), 1)
+        self.assertEqual(len(figure.axes[0].collections), 0)
 
     def test_prior_predictive_sampling_supports_global_variant(self) -> None:
         matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s2"]})
@@ -154,102 +142,45 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         self.assertLess(probabilities[0], 1e-10)
         self.assertGreater(probabilities[-1], 1.0 - 1e-10)
 
-    def test_returns_mean_probabilities_not_inverse_mean(self) -> None:
-        matrix = pl.DataFrame({"item_id": ["item-1", "item-2"], "source": ["s1", "s1"]})
+    def test_reads_saved_judge_accuracy_ppc_summaries(self) -> None:
         posterior = {
-            "item_ids": np.asarray(["item-1", "item-2"]),
-            "theta": np.asarray([[[4.0, -4.0]]]),
-            "b": np.asarray([[[0.0, 0.0]]]),
-            "a": np.asarray([[[1.0, 1.0]]]),
+            "judge_ids": np.asarray(["judge-a", "judge-b"]),
+            "judge_accuracy_ppc_mean": np.asarray([0.8, 0.2]),
+            "judge_accuracy_ppc_p05": np.asarray([0.7, 0.1]),
+            "judge_accuracy_ppc_p95": np.asarray([0.9, 0.3]),
         }
 
-        predicted_mean, lower, upper = posterior_predictive_judge_accuracy(matrix, posterior)
+        predicted_mean, lower, upper = judge_accuracy_ppc_summaries(posterior)
 
-        self.assertLess(predicted_mean[0], 1.0)
-        self.assertGreater(predicted_mean[1], 0.0)
-        np.testing.assert_allclose(predicted_mean, np.asarray([0.98201379, 0.01798621]))
-        np.testing.assert_allclose(lower, predicted_mean)
-        np.testing.assert_allclose(upper, predicted_mean)
+        np.testing.assert_allclose(predicted_mean, np.asarray([0.8, 0.2]))
+        np.testing.assert_allclose(lower, np.asarray([0.7, 0.1]))
+        np.testing.assert_allclose(upper, np.asarray([0.9, 0.3]))
 
-    def test_uses_all_available_draws_for_predictive_intervals(self) -> None:
-        matrix = pl.DataFrame({"item_id": ["item-1"], "source": ["s1"]})
-        early_draws = np.full((240, 1), -4.0)
-        late_draws = np.full((20, 1), 4.0)
+    def test_rejects_missing_saved_judge_accuracy_ppc_summaries(self) -> None:
         posterior = {
-            "item_ids": np.asarray(["item-1"]),
-            "theta": np.asarray([np.vstack([early_draws, late_draws])]),
-            "b": np.asarray([np.zeros((260, 1))]),
-            "a": np.asarray([np.ones((260, 1))]),
-        }
-
-        predicted_mean, _, upper = posterior_predictive_judge_accuracy(matrix, posterior)
-
-        self.assertGreater(predicted_mean[0], 0.09)
-        self.assertGreater(upper[0], 0.9)
-
-    def test_uses_theta_source_for_source_hier_predictive_accuracy(self) -> None:
-        matrix = pl.DataFrame(
-            {
-                "item_id": ["item-1", "item-2"],
-                "source": ["source-a", "source-b"],
-            }
-        )
-        posterior = {
-            "item_ids": np.asarray(["item-1", "item-2"]),
-            "source_ids": np.asarray(["source-a", "source-b"]),
-            "theta": np.asarray([[[0.0]]]),
-            "theta_source": np.asarray([[[[3.0, -3.0]]]]),
-            "b": np.asarray([[[0.0, 0.0]]]),
-            "a": np.asarray([[[1.0, 1.0]]]),
-        }
-
-        predicted_mean, lower, upper = posterior_predictive_judge_accuracy(matrix, posterior)
-
-        np.testing.assert_allclose(predicted_mean, np.asarray([0.5]), atol=1e-6)
-        np.testing.assert_allclose(lower, predicted_mean)
-        np.testing.assert_allclose(upper, predicted_mean)
-
-    def test_rejects_item_id_mismatch_between_matrix_and_posterior(self) -> None:
-        matrix = pl.DataFrame(
-            {
-                "item_id": ["item-1", "item-2"],
-                "source": ["s1", "s1"],
-            }
-        )
-        posterior = {
-            "item_ids": np.asarray(["item-1", "item-x"]),
-            "theta": np.asarray([[[1.0]]]),
-            "b": np.asarray([[[0.0, 0.0]]]),
-            "a": np.asarray([[[1.0, 1.0]]]),
+            "judge_ids": np.asarray(["judge-a"]),
+            "judge_accuracy_ppc_mean": np.asarray([0.5]),
         }
 
         with self.assertRaisesRegex(
             ValueError,
-            "Posterior item_ids do not match matrix item_id order",
+            "unsupported for PPC outputs",
         ):
-            posterior_predictive_judge_accuracy(matrix, posterior)
+            validate_judge_accuracy_ppc_summaries(posterior)
 
-    def test_rejects_missing_source_mapping_for_source_hier_posterior(self) -> None:
-        matrix = pl.DataFrame(
-            {
-                "item_id": ["item-1"],
-                "source": ["source-missing"],
-            }
-        )
+    def test_rejects_judge_accuracy_ppc_summary_length_mismatch(self) -> None:
         posterior = {
-            "item_ids": np.asarray(["item-1"]),
-            "source_ids": np.asarray(["source-a"]),
-            "theta_source": np.asarray([[[[0.0]]]]),
-            "theta": np.asarray([[[0.0]]]),
-            "b": np.asarray([[[0.0]]]),
-            "a": np.asarray([[[1.0]]]),
+            "judge_ids": np.asarray(["judge-a", "judge-b"]),
+            "judge_accuracy_ppc_mean": np.asarray([0.5]),
+            "judge_accuracy_ppc_p05": np.asarray([0.4]),
+            "judge_accuracy_ppc_p95": np.asarray([0.6]),
         }
 
         with self.assertRaisesRegex(
             ValueError,
-            "Matrix sources are missing from posterior source_ids",
+            "length does not match judge_ids length",
         ):
-            posterior_predictive_judge_accuracy(matrix, posterior)
+            validate_judge_accuracy_ppc_summaries(posterior)
 
     def test_validate_posterior_judge_order_accepts_matching_order(self) -> None:
         matrix_judge_ids = np.asarray(["judge-a", "judge-b"])
@@ -267,7 +198,26 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         ):
             validate_posterior_judge_order(matrix_judge_ids, posterior)
 
-    def test_plot_judge_reliability_ridge_uses_inline_accuracy_panel(self) -> None:
+    def test_observed_accuracy_preserves_matrix_column_order(self) -> None:
+        matrix = pl.DataFrame(
+            {
+                "item_id": ["item-1", "item-2"],
+                "label": ["A>B", "B>A"],
+                "original_id": [1, 2],
+                "question": ["q1", "q2"],
+                "source": ["s1", "s1"],
+                "split": ["gpt", "gpt"],
+                "judge-b": [0, 1],
+                "judge-a": [1, 0],
+            }
+        )
+
+        judge_ids, accuracies = observed_accuracy(matrix)
+
+        np.testing.assert_array_equal(judge_ids, np.asarray(["judge-b", "judge-a"]))
+        np.testing.assert_allclose(accuracies, np.asarray([0.5, 0.5]))
+
+    def test_plot_judge_accuracy_ppc_returns_single_axis_accuracy_figure(self) -> None:
         matrix = pl.DataFrame(
             {
                 "item_id": ["item-1", "item-2"],
@@ -282,19 +232,29 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
         )
         posterior = {
             "judge_ids": np.asarray(["judge-a", "judge-b"]),
-            "item_ids": np.asarray(["item-1", "item-2"]),
             "theta": np.asarray([[[1.0, -1.0]]]),
-            "b": np.asarray([[[0.0, 0.0]]]),
-            "a": np.asarray([[[1.0, 1.0]]]),
+            "judge_accuracy_ppc_mean": np.asarray([0.75, 0.25]),
+            "judge_accuracy_ppc_p05": np.asarray([0.6, 0.1]),
+            "judge_accuracy_ppc_p95": np.asarray([0.9, 0.4]),
         }
 
-        figure = plot_judge_reliability_ridge(matrix, posterior)
+        figure = plot_judge_accuracy_ppc(matrix, posterior)
 
-        self.assertEqual(len(figure.axes), 2)
+        self.assertEqual(len(figure.axes), 1)
+        self.assertEqual(figure.axes[0].get_xlabel(), "Accuracy")
+        self.assertNotEqual(tuple(figure.axes[0].get_xlim()), (0.0, 1.0))
+
+    def test_plot_judge_reliability_ridge_returns_single_axis_density_figure(self) -> None:
+        posterior = {
+            "judge_ids": np.asarray(["judge-a", "judge-b"]),
+            "theta": np.asarray([[[1.0, -1.0], [0.8, -0.8]]]),
+        }
+
+        figure = plot_judge_reliability_ridge(posterior)
+
+        self.assertEqual(len(figure.axes), 1)
         self.assertEqual(figure.axes[0].get_xlabel(), "Posterior reliability (theta)")
-        self.assertEqual(figure.axes[1].get_xlabel(), "Accuracy")
         self.assertEqual(len(figure.legends), 0)
-        self.assertNotEqual(tuple(figure.axes[1].get_xlim()), (0.0, 1.0))
 
     def test_judge_color_map_uses_pinned_colors_for_known_models(self) -> None:
         judge_ids = np.asarray(
@@ -420,8 +380,10 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
     def test_cleanup_posterior_figure_outputs_removes_stale_source_figure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             figures_dir = Path(temp_dir)
+            ppc_path = figures_dir / f"{JUDGE_ACCURACY_PPC_STEM}.png"
             ridge_path = figures_dir / f"{JUDGE_RELIABILITY_RIDGE_STEM}.png"
             source_path = figures_dir / f"{JUDGE_RELIABILITY_BY_SOURCE_STEM}.png"
+            ppc_path.write_bytes(b"ppc")
             ridge_path.write_bytes(b"ridge")
             source_path.write_bytes(b"source")
 
@@ -429,8 +391,10 @@ class PosteriorPredictiveJudgeAccuracyTests(unittest.TestCase):
                 figures_dir,
                 keep_ridge=True,
                 keep_source=False,
+                keep_ppc=True,
             )
 
+            self.assertTrue(ppc_path.exists())
             self.assertTrue(ridge_path.exists())
             self.assertFalse(source_path.exists())
 

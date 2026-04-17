@@ -7,9 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
-
-PROMPT_TEMPLATE_NAMES = {"pointwise", "pointwise_cot", "pairwise", "pairwise_cot"}
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 
 class ExperimentMetadata(BaseModel):
@@ -53,21 +51,9 @@ class JudgeConfig(BaseModel):
     id: str
     backend: Literal["mlx"] = "mlx"
     model: str
-    prompt_template: str
     max_tokens: int = Field(gt=0, default=256)
     trust_remote_code: bool = False
     reverse_order: bool = False
-
-    @field_validator("prompt_template")
-    @classmethod
-    def validate_prompt_template(cls, value: str) -> str:
-        """Restrict prompt template names to supported variants."""
-
-        if value not in PROMPT_TEMPLATE_NAMES:
-            expected = ", ".join(sorted(PROMPT_TEMPLATE_NAMES))
-            msg = f"Unsupported prompt template '{value}'. Expected one of: {expected}"
-            raise ValueError(msg)
-        return value
 
 
 class PriorConfig(BaseModel):
@@ -113,6 +99,27 @@ class InferenceConfig(BaseModel):
         return self.output_dir / self.file_name
 
 
+class AnalysisPlotsConfig(BaseModel):
+    """Configurable plotting defaults for analysis outputs."""
+
+    max_sources: int = Field(gt=0, default=8)
+
+
+class AnalysisReportConfig(BaseModel):
+    """Configurable reporting defaults for generated exports."""
+
+    standout_judge_id: str = "deepseek-r1-distill-qwen-14b"
+    standout_case_limit: int = Field(gt=0, default=3)
+    response_synopsis_chars: int = Field(gt=0, default=120)
+
+
+class AnalysisConfig(BaseModel):
+    """Analysis and report policy defaults."""
+
+    plots: AnalysisPlotsConfig = Field(default_factory=AnalysisPlotsConfig)
+    report: AnalysisReportConfig = Field(default_factory=AnalysisReportConfig)
+
+
 class ExperimentConfig(BaseModel):
     """Single source of truth for the experiment pipeline."""
 
@@ -121,12 +128,15 @@ class ExperimentConfig(BaseModel):
     judges: list[JudgeConfig]
     inference: InferenceConfig
     model: IRTConfig
+    analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
     _project_root: Path = PrivateAttr(default=Path.cwd())
 
     @model_validator(mode="after")
     def ensure_unique_judge_ids(self) -> ExperimentConfig:
-        """Validate that judge identifiers are unique."""
+        """Validate that judge identifiers are present and unique."""
 
+        if not self.judges:
+            raise ValueError("At least one judge must be configured.")
         judge_ids = [judge.id for judge in self.judges]
         if len(judge_ids) != len(set(judge_ids)):
             raise ValueError("Judge IDs must be unique.")

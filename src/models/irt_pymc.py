@@ -2,52 +2,31 @@
 
 from __future__ import annotations
 
-import argparse
 import logging
-from pathlib import Path
 from typing import Any
 
 import numpy as np
-import polars as pl
 import pymc as pm
 
-from src.data.validate import assert_complete_judge_coverage
-from src.logging_utils import configure_logging, format_table_for_log
-from src.models.irt_common import (
-    build_model_priors,
-    load_matrix_observations,
-    save_posterior,
-    summarize_item_parameters,
-    summarize_judges,
-)
+from src.models.irt_common import aggregate_judge_accuracy_ppc, build_model_priors
 from src.schemas import ExperimentConfig
 
 logger = logging.getLogger(__name__)
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse CLI arguments for PyMC inference."""
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, required=True, help="Path to the experiment YAML.")
-    return parser.parse_args()
-
-
 def _sample_configured_prior(
     name: str,
+    prior,
     *,
-    dist_name: str,
-    loc: float,
-    scale: float,
     dims: str | tuple[str, ...],
 ) -> pm.TensorVariable:
-    """Sample a configured scalar/vector prior using the declared distribution family."""
+    """Sample a configured scalar or vector prior using the declared distribution family."""
 
-    if dist_name == "normal":
-        return pm.Normal(name, mu=loc, sigma=scale, dims=dims)
-    if dist_name == "lognormal":
-        return pm.LogNormal(name, mu=loc, sigma=scale, dims=dims)
-    raise ValueError(f"Unsupported prior distribution '{dist_name}' for {name}")
+    if prior.dist == "normal":
+        return pm.Normal(name, mu=prior.loc, sigma=prior.scale, dims=dims)
+    if prior.dist == "lognormal":
+        return pm.LogNormal(name, mu=prior.loc, sigma=prior.scale, dims=dims)
+    raise ValueError(f"Unsupported prior distribution '{prior.dist}' for {name}")
 
 
 def _build_model(config: ExperimentConfig, observations: dict[str, Any]) -> pm.Model:
@@ -66,28 +45,10 @@ def _build_model(config: ExperimentConfig, observations: dict[str, Any]) -> pm.M
         judge_idx = pm.Data("judge_idx", observations["judge_idx"], dims="obs")
         item_idx = pm.Data("item_idx", observations["item_idx"], dims="obs")
         source_idx = pm.Data("source_idx", observations["source_idx"], dims="obs")
-        theta = _sample_configured_prior(
-            "theta",
-            dist_name=priors.theta.dist,
-            loc=priors.theta.loc,
-            scale=priors.theta.scale,
-            dims="judge",
-        )
-        b = _sample_configured_prior(
-            "b",
-            dist_name=priors.b.dist,
-            loc=priors.b.loc,
-            scale=priors.b.scale,
-            dims="item",
-        )
+        theta = _sample_configured_prior("theta", priors.theta, dims="judge")
+        b = _sample_configured_prior("b", priors.b, dims="item")
         if config.model.variant == "source_hier":
-            tau_theta = _sample_configured_prior(
-                "tau_theta",
-                dist_name=priors.tau_theta.dist,
-                loc=priors.tau_theta.loc,
-                scale=priors.tau_theta.scale,
-                dims="judge",
-            )
+            tau_theta = _sample_configured_prior("tau_theta", priors.tau_theta, dims="judge")
             theta_source = pm.Normal(
                 "theta_source",
                 mu=theta[:, None],
@@ -98,13 +59,7 @@ def _build_model(config: ExperimentConfig, observations: dict[str, Any]) -> pm.M
         else:
             judge_term = theta[judge_idx]
         if config.model.type == "2PL":
-            a = _sample_configured_prior(
-                "a",
-                dist_name=priors.a.dist,
-                loc=priors.a.loc,
-                scale=priors.a.scale,
-                dims="item",
-            )
+            a = _sample_configured_prior("a", priors.a, dims="item")
             logits = a[item_idx] * (judge_term - b[item_idx])
         else:
             logits = judge_term - b[item_idx]
@@ -137,7 +92,7 @@ def _extract_samples(idata: Any, config: ExperimentConfig) -> dict[str, np.ndarr
 def run_mcmc(
     config: ExperimentConfig,
     observations: dict[str, Any],
-) -> tuple[Any, dict[str, np.ndarray]]:
+) -> tuple[Any, dict[str, np.ndarray], dict[str, np.ndarray]]:
     """Run PyMC NUTS for the configured model."""
 
     model = _build_model(config, observations)
@@ -153,45 +108,12 @@ def run_mcmc(
             return_inferencedata=True,
             progressbar=logger.isEnabledFor(logging.INFO),
         )
-    return idata, _extract_samples(idata, config)
-
-
-def run_and_save_posterior(config: ExperimentConfig, matrix: pl.DataFrame | None = None) -> None:
-    """Run PyMC inference and persist posterior samples."""
-
-    config.ensure_directories()
-    prepared_matrix = matrix if matrix is not None else pl.read_parquet(config.data.matrix_path)
-    assert_complete_judge_coverage(prepared_matrix, [judge.id for judge in config.judges])
-    observations = load_matrix_observations(prepared_matrix)
-    _, samples = run_mcmc(config, observations)
-    output_path = config.inference.posterior_path
-    save_posterior(
-        output_path,
-        samples,
-        observations,
-        config.model.type,
-        metadata={
-            "backend": np.asarray("pymc"),
-            "experiment_seed": np.asarray(config.experiment.seed),
-            "num_chains": np.asarray(samples["theta"].shape[0]),
-        },
-    )
-    summary = summarize_judges(samples, observations["judge_ids"])
-    item_summary = summarize_item_parameters(samples)
-    logger.info("saved_posterior=%s", output_path)
-    if logger.isEnabledFor(logging.INFO):
-        logger.info("judge summary\n%s", format_table_for_log(summary))
-        logger.info("item parameter summary\n%s", format_table_for_log(item_summary))
-
-
-def main() -> None:
-    """CLI entrypoint for PyMC IRT inference."""
-
-    configure_logging()
-    args = parse_args()
-    config = ExperimentConfig.from_yaml(args.config)
-    run_and_save_posterior(config)
-
-
-if __name__ == "__main__":
-    main()
+        posterior_predictive = pm.sample_posterior_predictive(
+            idata,
+            var_names=["correct"],
+            return_inferencedata=False,
+            progressbar=False,
+        )
+    samples = _extract_samples(idata, config)
+    ppc_summary = aggregate_judge_accuracy_ppc(np.asarray(posterior_predictive["correct"]), observations)
+    return idata, samples, ppc_summary

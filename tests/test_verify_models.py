@@ -15,25 +15,21 @@ class VerifyModelsTests(unittest.TestCase):
             JudgeConfig(
                 id="judge-a",
                 model="model-a",
-                prompt_template="pointwise",
                 trust_remote_code=False,
             ),
             JudgeConfig(
                 id="judge-b",
                 model="model-a",
-                prompt_template="pointwise",
                 trust_remote_code=False,
             ),
             JudgeConfig(
                 id="judge-c",
                 model="model-a",
-                prompt_template="pointwise",
                 trust_remote_code=True,
             ),
             JudgeConfig(
                 id="judge-d",
                 model="model-b",
-                prompt_template="pointwise",
                 trust_remote_code=False,
             ),
         ]
