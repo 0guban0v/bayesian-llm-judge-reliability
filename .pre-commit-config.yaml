@@ -10,28 +10,28 @@ repos:
     hooks:
       - id: ruff-check
         name: ruff check
-        entry: uv run ruff check src tests notebooks scripts
+        entry: uv run ruff check src tests scripts
         language: system
         pass_filenames: false
         stages: [pre-commit]
 
       - id: ruff-format-check
         name: ruff format check
-        entry: uv run ruff format --check src tests notebooks scripts
+        entry: uv run ruff format --check src tests scripts
         language: system
         pass_filenames: false
         stages: [pre-commit]
 
       - id: ban-disallowed-patterns
         name: ban pandas ipynb print
-        entry: bash -c '! rg -n "(import pandas|from pandas|\\.ipynb|print\\()" src tests notebooks scripts'
+        entry: bash -c '! rg -n "(import pandas|from pandas|\\.ipynb|print\\()" src tests scripts'
         language: system
         pass_filenames: false
         stages: [pre-commit]
 
       - id: dead-code
         name: dead code
-        entry: uv run vulture src tests notebooks tests/vulture_whitelist.py --ignore-names "_,__generated_with"
+        entry: uv run vulture src tests tests/vulture_whitelist.py --ignore-names "_,__generated_with"
         language: system
         pass_filenames: false
         stages: [pre-commit]

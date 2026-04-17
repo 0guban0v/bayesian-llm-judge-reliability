@@ -10,8 +10,9 @@ from unittest.mock import patch
 import numpy as np
 import polars as pl
 from src.analysis.posterior_archive import load_posterior
+from src.models.infer import run_and_save_posterior
 from src.models.irt_common import save_posterior
-from src.models.irt_pymc import run_and_save_posterior, run_mcmc
+from src.models.irt_pymc import run_mcmc
 from src.schemas import ExperimentConfig, PriorConfig
 
 
@@ -44,11 +45,12 @@ class PyMCModelTests(unittest.TestCase):
         config.model.variant = "source_hier"
         config.model.priors.tau_theta = PriorConfig(dist="lognormal", loc=0.0, scale=0.5)
 
-        _, samples = run_mcmc(config, self._make_observations())
+        _, samples, ppc_summary = run_mcmc(config, self._make_observations())
 
         self.assertIn("theta", samples)
         self.assertIn("tau_theta", samples)
         self.assertIn("theta_source", samples)
+        self.assertIn("judge_accuracy_ppc_mean", ppc_summary)
         self.assertEqual(samples["theta"].ndim, 3)
         self.assertEqual(samples["theta_source"].ndim, 4)
         self.assertEqual(samples["diverging"].ndim, 2)
@@ -59,13 +61,14 @@ class PyMCModelTests(unittest.TestCase):
         config.model.variant = "global"
         config.model.priors.tau_theta = None
 
-        _, samples = run_mcmc(config, self._make_observations())
+        _, samples, ppc_summary = run_mcmc(config, self._make_observations())
 
         self.assertIn("theta", samples)
         self.assertIn("b", samples)
         self.assertNotIn("a", samples)
         self.assertNotIn("tau_theta", samples)
         self.assertNotIn("theta_source", samples)
+        self.assertEqual(ppc_summary["judge_accuracy_ppc_mean"].shape, (2,))
         self.assertEqual(samples["theta"].shape[:2], (1, 4))
 
     def test_run_and_save_posterior_rejects_incomplete_judge_coverage(self) -> None:
@@ -87,7 +90,7 @@ class PyMCModelTests(unittest.TestCase):
             }
         )
 
-        with patch("src.models.irt_pymc.run_mcmc") as run_mcmc_mock:
+        with patch("src.models.infer.run_mcmc") as run_mcmc_mock:
             with self.assertRaisesRegex(ValueError, "complete judge coverage|Incomplete judges"):
                 run_and_save_posterior(config, matrix)
 
@@ -97,7 +100,7 @@ class PyMCModelTests(unittest.TestCase):
         config = self._make_config()
         observations = self._make_observations()
 
-        _, samples = run_mcmc(config, observations)
+        _, samples, ppc_summary = run_mcmc(config, observations)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             posterior_path = Path(temp_dir) / "posterior.npz"
@@ -110,6 +113,7 @@ class PyMCModelTests(unittest.TestCase):
                     "backend": np.asarray("pymc"),
                     "experiment_seed": np.asarray(config.experiment.seed),
                     "num_chains": np.asarray(samples["theta"].shape[0]),
+                    **ppc_summary,
                 },
             )
             posterior = load_posterior(posterior_path)
@@ -124,6 +128,9 @@ class PyMCModelTests(unittest.TestCase):
             "experiment_seed",
             "num_chains",
             "posterior_schema_version",
+            "judge_accuracy_ppc_mean",
+            "judge_accuracy_ppc_p05",
+            "judge_accuracy_ppc_p95",
             "diverging",
             "theta",
             "b",

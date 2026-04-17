@@ -8,7 +8,9 @@ from pathlib import Path
 
 import polars as pl
 
-from src.data.loader import ITEM_METADATA_COLUMNS, build_and_write_matrix, load_or_prepare_items
+from src.data.loader import build_and_write_matrix, load_or_prepare_items
+from src.data.matrix_semantics import judge_columns as shared_judge_columns
+from src.data.matrix_semantics import summarize_matrix as shared_summarize_matrix
 from src.logging_utils import configure_logging, format_table_for_log
 from src.schemas import ExperimentConfig
 
@@ -26,27 +28,13 @@ def parse_args() -> argparse.Namespace:
 def judge_columns(matrix: pl.DataFrame) -> list[str]:
     """Return the columns corresponding to judge outputs."""
 
-    return [column for column in matrix.columns if column not in ITEM_METADATA_COLUMNS]
+    return shared_judge_columns(matrix)
 
 
 def summarize_matrix(matrix: pl.DataFrame) -> pl.DataFrame:
     """Compute response-rate and accuracy summaries for each judge."""
 
-    summaries: list[dict[str, float | int | str]] = []
-    for judge_id in judge_columns(matrix):
-        series = matrix.get_column(judge_id)
-        responded = int(series.is_not_null().sum())
-        total = matrix.height
-        accuracy = float(series.drop_nulls().mean() or 0.0)
-        summaries.append(
-            {
-                "judge_id": judge_id,
-                "responded_items": responded,
-                "response_rate": responded / total if total else 0.0,
-                "accuracy": accuracy,
-            }
-        )
-    return pl.DataFrame(summaries).sort("judge_id")
+    return shared_summarize_matrix(matrix)
 
 
 def validate_items(items: pl.DataFrame) -> None:

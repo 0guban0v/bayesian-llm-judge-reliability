@@ -8,7 +8,22 @@ from pathlib import Path
 import numpy as np
 
 POSTERIOR_SCHEMA_VERSION = 1
-_REQUIRED_KEYS = {"theta", "b", "judge_ids", "item_ids", "source_ids", "model_type", "n_obs"}
+_REQUIRED_KEYS = {
+    "theta",
+    "b",
+    "judge_ids",
+    "item_ids",
+    "source_ids",
+    "model_type",
+    "n_obs",
+    "posterior_schema_version",
+}
+JUDGE_ACCURACY_PPC_FIELDS = (
+    "judge_accuracy_ppc_mean",
+    "judge_accuracy_ppc_p05",
+    "judge_accuracy_ppc_p95",
+)
+
 _OPTIONAL_KEYS = {
     "a",
     "tau_theta",
@@ -17,9 +32,9 @@ _OPTIONAL_KEYS = {
     "backend",
     "experiment_seed",
     "num_chains",
-    "posterior_schema_version",
+    *JUDGE_ACCURACY_PPC_FIELDS,
 }
-_SUPPORTED_SCHEMA_VERSIONS = {0, POSTERIOR_SCHEMA_VERSION}
+_SUPPORTED_SCHEMA_VERSIONS = {POSTERIOR_SCHEMA_VERSION}
 
 
 @dataclass(frozen=True)
@@ -58,7 +73,11 @@ def _require_scalar(payload: dict[str, np.ndarray], key: str) -> np.ndarray:
 def validate_posterior_payload(payload: dict[str, np.ndarray]) -> PosteriorArchive:
     """Validate archive keys, shapes, and metadata relationships."""
 
-    schema_version = int(np.asarray(payload.get("posterior_schema_version", np.asarray(0))))
+    if "posterior_schema_version" not in payload:
+        raise ValueError(
+            "Legacy posterior archives are unsupported. Re-run inference to create a schema version 1 archive."
+        )
+    schema_version = int(np.asarray(payload["posterior_schema_version"]))
     if schema_version not in _SUPPORTED_SCHEMA_VERSIONS:
         raise ValueError(f"Unsupported posterior schema version: {schema_version}")
     _require_keys(payload)
@@ -108,6 +127,19 @@ def validate_posterior_payload(payload: dict[str, np.ndarray]) -> PosteriorArchi
             raise ValueError(
                 "Posterior num_chains does not match sample arrays. "
                 f"num_chains={num_chains} theta_chains={theta.shape[0]}"
+            )
+    missing_ppc_fields = [field for field in JUDGE_ACCURACY_PPC_FIELDS if field not in payload]
+    if missing_ppc_fields:
+        raise ValueError(
+            "Posterior archive is unsupported for current analysis outputs. Re-run inference to create an archive "
+            f"with judge accuracy PPC summaries. missing={missing_ppc_fields}"
+        )
+    for field in JUDGE_ACCURACY_PPC_FIELDS:
+        values = _require_ndim(payload, field, 1)
+        if len(values) != len(judge_ids):
+            raise ValueError(
+                f"Posterior {field} length does not match judge_ids length. "
+                f"{field}={len(values)} judge_ids={len(judge_ids)}"
             )
     validated = {
         key: np.asarray(value) for key, value in payload.items() if key in _REQUIRED_KEYS or key in _OPTIONAL_KEYS
