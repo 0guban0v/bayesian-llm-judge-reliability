@@ -1,0 +1,8 @@
+{
+  "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+  "max_tokens": 10,
+  "trust_remote_code": false,
+  "reverse_order": false,
+  "prompt_variant": "fixed_verdict_only",
+  "prompt_protocol_version": "2026-04-16.fixed_verdict_only.v1"
+}

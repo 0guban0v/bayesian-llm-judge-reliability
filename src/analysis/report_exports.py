@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 import numpy as np
@@ -10,18 +11,18 @@ import polars as pl
 
 from src.analysis.diagnostics import diagnostic_parameter_rows, summarize_diagnostic_rows
 from src.analysis.plot_config import judge_display_label, source_display_label
-from src.analysis.plots import (
+from src.analysis.posterior_archive import load_posterior
+from src.analysis.posterior_queries import probability_judge_a_exceeds_b, rank_judges
+from src.analysis.posterior_utils import (
     has_source_reliability,
     source_reliability_summary,
     top_source_ids,
     validate_posterior_plot_inputs,
 )
-from src.analysis.posterior_archive import load_posterior
-from src.analysis.posterior_queries import probability_judge_a_exceeds_b, rank_judges
 from src.data.loader import load_judge_logs
+from src.data.matrix_semantics import first_original_judgments, observed_accuracy_frame, pivot_original_judgments
 from src.schemas import ExperimentConfig
 
-DEFAULT_STANDOUT_JUDGE_ID = "deepseek-r1-distill-qwen-14b"
 ROW_END = r"\\"
 LATEX_ESCAPE_MAP = {
     "\\": r"\textbackslash{}",
@@ -63,11 +64,8 @@ def compile_safe_note(message: str) -> str:
 
 
 def observed_accuracy(matrix: pl.DataFrame, judge_ids: list[str]) -> dict[str, float]:
-    return {
-        judge_id: float(matrix.get_column(judge_id).drop_nulls().mean() or 0.0)
-        for judge_id in judge_ids
-        if judge_id in matrix.columns
-    }
+    observed = observed_accuracy_frame(matrix, judge_ids)
+    return dict(zip(observed.get_column("judge_id").to_list(), observed.get_column("accuracy").to_list(), strict=True))
 
 
 def representative_pairwise_rows(
@@ -105,39 +103,33 @@ def representative_pairwise_rows(
     ]
 
 
-def selected_focus_judge(judge_ids: list[str]) -> str:
-    return DEFAULT_STANDOUT_JUDGE_ID if DEFAULT_STANDOUT_JUDGE_ID in judge_ids else judge_ids[0]
+def selected_focus_judge(judge_ids: list[str], preferred_judge_id: str | None) -> str:
+    if preferred_judge_id and preferred_judge_id in judge_ids:
+        return preferred_judge_id
+    return judge_ids[0]
 
 
 def standout_cases(
     items: pl.DataFrame,
     logs: pl.DataFrame,
     judge_ids: list[str],
+    *,
+    preferred_judge_id: str | None,
+    limit: int,
 ) -> tuple[str, pl.DataFrame]:
-    focus_judge = selected_focus_judge(judge_ids)
+    focus_judge = selected_focus_judge(judge_ids, preferred_judge_id)
     if logs.height == 0:
         return focus_judge, pl.DataFrame([])
 
-    original_logs = (
-        logs.filter(pl.col("prompt_order").eq("original") & pl.col("correct").is_not_null())
-        .with_row_index("log_order")
-        .sort("log_order")
-    )
+    original_logs = logs.filter(pl.col("prompt_order").eq("original") & pl.col("correct").is_not_null())
     if original_logs.height == 0:
         return focus_judge, pl.DataFrame([])
 
-    first_correctness = (
-        original_logs.select(["log_order", "item_id", "judge_id", "correct"])
-        .group_by(["item_id", "judge_id"], maintain_order=True)
-        .agg(pl.col("correct").first().cast(pl.Int8).alias("correct_int"))
-    )
-    pivoted = first_correctness.pivot(
-        index="item_id",
-        on="judge_id",
-        values="correct_int",
-        aggregate_function="first",
-    )
-    other_judges = [judge_id for judge_id in judge_ids if judge_id != focus_judge]
+    first_correctness = first_original_judgments(logs)
+    if first_correctness.height == 0:
+        return focus_judge, pl.DataFrame([])
+    pivoted = pivot_original_judgments(first_correctness)
+    other_judges = [judge_id for judge_id in judge_ids if judge_id != focus_judge and judge_id in pivoted.columns]
     filtered = pivoted.filter(
         pl.col(focus_judge).fill_null(0).eq(1)
         & pl.all_horizontal([pl.col(judge_id).fill_null(0).eq(0) for judge_id in other_judges])
@@ -155,22 +147,23 @@ def standout_cases(
             ]
         )
     )
+    available_judge_ids = [j for j in judge_ids if j in filtered.columns]
     selected = (
-        items.join(filtered.select(["item_id", *judge_ids]), on="item_id", how="inner")
+        items.join(filtered.select(["item_id", *available_judge_ids]), on="item_id", how="inner")
         .join(focus_logs, on="item_id", how="left")
         .sort("item_id")
         .select(
             [
                 "item_id",
                 "source",
-                "question",
                 "label",
+                "response_a",
+                "response_b",
                 "raw_response",
-                "latency_ms",
-                *judge_ids,
+                *available_judge_ids,
             ]
         )
-        .head(3)
+        .head(limit)
     )
     return focus_judge, selected
 
@@ -304,7 +297,7 @@ def write_source_exports(
         )
         return
 
-    ordered_sources = top_source_ids(matrix, posterior)
+    ordered_sources = top_source_ids(matrix, posterior, max_sources=config.analysis.plots.max_sources)
     summary = source_reliability_summary(posterior, ordered_sources)
     lines = []
     for source_id in ordered_sources:
@@ -338,6 +331,12 @@ def write_source_exports(
     )
 
 
+def _response_synopsis(text: str, max_chars: int) -> str:
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
+    snippet = sentences[-1] if sentences else text.strip()
+    return snippet[:max_chars] + ("\u2026" if len(snippet) > max_chars else "")
+
+
 def write_case_exports(config: ExperimentConfig, items: pl.DataFrame | None) -> None:
     output_dir = generated_dir(config)
     if items is None:
@@ -345,9 +344,15 @@ def write_case_exports(config: ExperimentConfig, items: pl.DataFrame | None) -> 
         return
 
     judge_ids = [judge.id for judge in config.judges]
-    focus_judge = selected_focus_judge(judge_ids)
+    focus_judge = selected_focus_judge(judge_ids, config.analysis.report.standout_judge_id)
     logs = load_judge_logs(config.data.logs_dir)
-    focus_judge, cases = standout_cases(items, logs, judge_ids)
+    focus_judge, cases = standout_cases(
+        items,
+        logs,
+        judge_ids,
+        preferred_judge_id=config.analysis.report.standout_judge_id,
+        limit=config.analysis.report.standout_case_limit,
+    )
     focus_label = judge_display_label(focus_judge)
     if cases.height == 0:
         write_text(
@@ -359,13 +364,23 @@ def write_case_exports(config: ExperimentConfig, items: pl.DataFrame | None) -> 
     table_rows = []
     for row in cases.to_dicts():
         verdict_line = str(row.get("raw_response") or "").splitlines()[0].strip()
-        question_text = " ".join(str(row.get("question") or "").split())
         table_rows.append(
             " & ".join(
                 [
                     tex_escape(source_display_label(str(row.get("source") or "unknown"))),
                     tex_escape(row.get("label") or "n/a"),
-                    tex_escape(question_text),
+                    tex_escape(
+                        _response_synopsis(
+                            str(row.get("response_a") or ""),
+                            config.analysis.report.response_synopsis_chars,
+                        )
+                    ),
+                    tex_escape(
+                        _response_synopsis(
+                            str(row.get("response_b") or ""),
+                            config.analysis.report.response_synopsis_chars,
+                        )
+                    ),
                     tex_escape(verdict_line or "n/a"),
                 ]
             )
@@ -376,29 +391,29 @@ def write_case_exports(config: ExperimentConfig, items: pl.DataFrame | None) -> 
         output_dir / "standout_cases.tex",
         "\n".join(
             [
-                (
-                    f"Items below are original-order cases where {tex_escape(focus_label)} is correct and every other "
-                    "configured judge is incorrect. Cases are sorted by item id and truncated to first three matches."
-                ),
                 r"\begin{table}[H]",
                 r"\captionsetup{justification=raggedright,singlelinecheck=false}",
                 r"\footnotesize",
                 r"\setlength{\tabcolsep}{3pt}",
                 (
-                    r"\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.13\textwidth}"
-                    r">{\raggedright\arraybackslash}p{0.07\textwidth}"
-                    r">{\raggedright\arraybackslash}p{0.62\textwidth}"
+                    r"\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.12\textwidth}"
+                    r">{\raggedright\arraybackslash}p{0.06\textwidth}"
+                    r">{\raggedright\arraybackslash}p{0.33\textwidth}"
+                    r">{\raggedright\arraybackslash}p{0.33\textwidth}"
                     r">{\raggedright\arraybackslash}p{0.11\textwidth}@{}}"
                 ),
                 r"\toprule",
-                (f"source & label & question text & {tex_escape(focus_label)} verdict {ROW_END}"),
+                (
+                    f"source & label & resp A (conclusion) & resp B (conclusion) & "
+                    f"{tex_escape(focus_label)} verdict {ROW_END}"
+                ),
                 r"\midrule",
                 *table_rows,
                 r"\bottomrule",
                 r"\end{tabular}",
                 (
                     f"\\caption{{Readable standout cases where only {tex_escape(focus_label)} "
-                    "is correct under original prompt order.}"
+                    "is correct and every other configured judge is incorrect under original prompt order.}"
                 ),
                 r"\label{tab:standout-cases}",
                 r"\end{table}",

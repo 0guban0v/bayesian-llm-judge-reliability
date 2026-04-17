@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Final
 
 PRIOR_PREDICTIVE_STEM: Final[str] = "prior_predictive_probabilities"
+JUDGE_ACCURACY_PPC_STEM: Final[str] = "judge_accuracy_ppc"
 JUDGE_RELIABILITY_RIDGE_STEM: Final[str] = "judge_reliability_ridge"
 JUDGE_RELIABILITY_BY_SOURCE_STEM: Final[str] = "judge_reliability_by_source"
 DIAGNOSTICS_SUMMARY_STEM: Final[str] = "diagnostics_summary"
@@ -28,6 +29,7 @@ def analysis_figure_paths(figures_dir: Path) -> dict[str, Path]:
 
     return {
         PRIOR_PREDICTIVE_STEM: figure_output_path(figures_dir, PRIOR_PREDICTIVE_STEM),
+        JUDGE_ACCURACY_PPC_STEM: figure_output_path(figures_dir, JUDGE_ACCURACY_PPC_STEM),
         JUDGE_RELIABILITY_RIDGE_STEM: figure_output_path(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM),
         JUDGE_RELIABILITY_BY_SOURCE_STEM: figure_output_path(
             figures_dir,

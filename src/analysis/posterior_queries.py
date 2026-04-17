@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from src.analysis.diagnostics import flatten_draws
 from src.analysis.posterior_archive import load_posterior
+from src.analysis.posterior_utils import flatten_draws
 from src.logging_utils import configure_logging, format_table_for_log
 from src.schemas import ExperimentConfig
 

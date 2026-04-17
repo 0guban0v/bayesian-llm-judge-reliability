@@ -13,7 +13,7 @@ from typing import Any, Literal, TextIO, cast
 from src.data.loader import load_or_prepare_items
 from src.judges.mlx_backend import clear_model_cache, generate_text
 from src.judges.parsers import parse_correctness, parse_verdict, swap_verdict
-from src.judges.prompts import format_prompt
+from src.judges.prompts import FIXED_PROMPT_VARIANT, PROMPT_PROTOCOL_VERSION, format_prompt
 from src.logging_utils import configure_logging
 from src.schemas import ExperimentConfig, JudgeConfig, JudgeResult
 
@@ -39,6 +39,38 @@ def build_log_path(logs_dir: Path, judge_id: str) -> Path:
     """Return the append-only JSONL path for a judge."""
 
     return logs_dir / f"{judge_id}.jsonl"
+
+
+def check_or_write_config_sidecar(log_path: Path, judge: JudgeConfig) -> None:
+    """Fail fast if the judge config changed since logs were written; write sidecar on first run."""
+
+    sidecar = log_path.with_suffix(".config.json")
+    fingerprint: dict[str, object] = {
+        "model": judge.model,
+        "max_tokens": judge.max_tokens,
+        "trust_remote_code": judge.trust_remote_code,
+        "reverse_order": judge.reverse_order,
+        "prompt_variant": FIXED_PROMPT_VARIANT,
+        "prompt_protocol_version": PROMPT_PROTOCOL_VERSION,
+    }
+    if sidecar.exists() and not log_path.exists():
+        sidecar.write_text(json.dumps(fingerprint, indent=2, ensure_ascii=True), encoding="utf-8")
+    elif sidecar.exists():
+        stored: dict[str, object] = json.loads(sidecar.read_text(encoding="utf-8"))
+        if stored != fingerprint:
+            changed = sorted(k for k in fingerprint if fingerprint[k] != stored.get(k))
+            raise ValueError(
+                f"Judge '{judge.id}' config has changed since logs were written "
+                f"(changed fields: {changed}). "
+                f"Delete {log_path} and {sidecar} to re-run with the new config."
+            )
+    elif log_path.exists():
+        raise ValueError(
+            f"Judge '{judge.id}' log is unsupported because it has no config sidecar. "
+            f"Delete {log_path} and re-run with the current prompt protocol."
+        )
+    else:
+        sidecar.write_text(json.dumps(fingerprint, indent=2, ensure_ascii=True), encoding="utf-8")
 
 
 def load_processed_keys(log_path: Path) -> set[tuple[str, str]]:
@@ -84,7 +116,6 @@ def judge_item(
 
     question, response_a, response_b = prompt_payload(item, prompt_order)
     prompt = format_prompt(
-        judge.prompt_template,
         question=question,
         response_a=response_a,
         response_b=response_b,
@@ -111,7 +142,7 @@ def judge_item(
         source=item["source"],
         question=item["question"],
         ground_truth_label=item["label"],
-        prompt_variant=judge.prompt_template,
+        prompt_variant=FIXED_PROMPT_VARIANT,
         prompt_order=cast(Literal["original", "reversed"], prompt_order),
         raw_response=raw_response,
         parsed_verdict=parsed_verdict_literal,
@@ -135,6 +166,7 @@ def run_judge(
     """Evaluate a configured judge over all pending items."""
 
     log_path = build_log_path(config.data.logs_dir, judge.id)
+    check_or_write_config_sidecar(log_path, judge)
     processed = load_processed_keys(log_path)
     prompt_orders = ("original", "reversed") if judge.reverse_order else ("original",)
     tasks: list[tuple[dict[str, Any], str]] = []
@@ -148,7 +180,7 @@ def run_judge(
         judge.id,
         judge.backend,
         judge.model,
-        judge.prompt_template,
+        FIXED_PROMPT_VARIANT,
         len(tasks),
         log_path,
     )

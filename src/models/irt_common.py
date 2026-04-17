@@ -10,7 +10,7 @@ import numpy as np
 import polars as pl
 
 from src.analysis.posterior_archive import POSTERIOR_SCHEMA_VERSION
-from src.data.loader import ITEM_METADATA_COLUMNS
+from src.data.matrix_semantics import ITEM_METADATA_COLUMNS
 from src.schemas import IRTConfig
 
 
@@ -62,6 +62,46 @@ def build_model_priors(model_config: IRTConfig) -> ModelPriors:
             else None
         ),
     )
+
+
+def sample_prior_values(
+    prior: PriorSpec,
+    *,
+    rng: np.random.Generator,
+    size: tuple[int, ...],
+) -> np.ndarray:
+    """Draw prior samples using the configured distribution family."""
+
+    if prior.dist == "normal":
+        return rng.normal(prior.loc, prior.scale, size=size)
+    if prior.dist == "lognormal":
+        return rng.lognormal(prior.loc, prior.scale, size=size)
+    raise ValueError(f"Unsupported prior distribution '{prior.dist}' for prior predictive draw")
+
+
+def aggregate_judge_accuracy_ppc(
+    posterior_predictive_correct: np.ndarray,
+    observations: dict[str, Any],
+) -> dict[str, np.ndarray]:
+    """Aggregate posterior predictive Bernoulli draws into per-judge accuracy summaries."""
+
+    flattened_draws = np.asarray(posterior_predictive_correct, dtype=float).reshape(
+        -1,
+        posterior_predictive_correct.shape[-1],
+    )
+    judge_idx = np.asarray(observations["judge_idx"], dtype=int)
+    n_judges = int(observations["n_judges"])
+    judge_accuracy_draws = np.empty((flattened_draws.shape[0], n_judges), dtype=float)
+    for judge_index in range(n_judges):
+        judge_mask = judge_idx == judge_index
+        if not np.any(judge_mask):
+            raise ValueError(f"No posterior predictive observations found for judge index {judge_index}")
+        judge_accuracy_draws[:, judge_index] = flattened_draws[:, judge_mask].mean(axis=1)
+    return {
+        "judge_accuracy_ppc_mean": judge_accuracy_draws.mean(axis=0),
+        "judge_accuracy_ppc_p05": np.quantile(judge_accuracy_draws, 0.05, axis=0),
+        "judge_accuracy_ppc_p95": np.quantile(judge_accuracy_draws, 0.95, axis=0),
+    }
 
 
 def load_matrix_observations(matrix: pl.DataFrame | Path) -> dict[str, Any]:
