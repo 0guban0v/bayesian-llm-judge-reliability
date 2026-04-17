@@ -6,6 +6,7 @@ import argparse
 import logging
 from pathlib import Path
 
+import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
@@ -37,85 +38,23 @@ def _flatten_parameter(samples: np.ndarray) -> np.ndarray:
     return samples.reshape(samples.shape[0], samples.shape[1], -1)
 
 
-def flatten_draws(samples: np.ndarray) -> np.ndarray:
-    """Collapse chain and draw axes into a single posterior sample axis."""
+def _diagnostic_dataset(samples: np.ndarray):
+    """Convert parameter draws into an ArviZ dataset with flattened feature axes."""
 
     flattened = _flatten_parameter(samples)
-    return flattened.reshape(-1, flattened.shape[-1])
-
-
-def _split_chains(samples: np.ndarray) -> np.ndarray:
-    """Split each chain in half for split-R-hat computation."""
-
-    flattened = _flatten_parameter(samples)
-    half_draws = flattened.shape[1] // 2
-    if half_draws < 2:
-        return np.empty((0, 0, flattened.shape[-1]), dtype=flattened.dtype)
-    first_half = flattened[:, :half_draws, :]
-    second_half = flattened[:, -half_draws:, :]
-    return np.concatenate([first_half, second_half], axis=0)
-
-
-def _compute_standard_rhat(flattened: np.ndarray) -> np.ndarray:
-    """Compute standard R-hat for already-flattened chain draws."""
-
-    chains, draws, features = flattened.shape
-    if chains < 2 or draws < 2:
-        return np.full(features, np.nan)
-    chain_means = flattened.mean(axis=1)
-    overall_mean = chain_means.mean(axis=0)
-    between = draws * ((chain_means - overall_mean) ** 2).sum(axis=0) / (chains - 1)
-    within = flattened.var(axis=1, ddof=1).mean(axis=0)
-    variance_estimate = ((draws - 1) / draws) * within + between / draws
-    ratio = np.divide(
-        variance_estimate,
-        within,
-        out=np.full(features, np.nan, dtype=float),
-        where=within != 0,
-    )
-    return np.sqrt(ratio)
+    return az.convert_to_dataset({"parameter": flattened})
 
 
 def compute_rhat(samples: np.ndarray) -> np.ndarray:
-    """Compute split-R-hat for each flattened parameter dimension."""
+    """Compute split-R-hat for each flattened parameter dimension via ArviZ."""
 
-    split_samples = _split_chains(samples)
-    if split_samples.size == 0:
-        feature_count = _flatten_parameter(samples).shape[-1]
-        return np.full(feature_count, np.nan)
-    return _compute_standard_rhat(split_samples)
-
-
-def _autocorrelation_1d(series: np.ndarray) -> np.ndarray:
-    """Compute the autocorrelation sequence for a 1D series."""
-
-    centered = series - series.mean()
-    variance = np.dot(centered, centered)
-    if variance == 0.0:
-        return np.ones(series.shape[0])
-    correlation = np.correlate(centered, centered, mode="full")[series.shape[0] - 1 :]
-    return correlation / variance
+    return np.asarray(az.rhat(_diagnostic_dataset(samples), method="split")["parameter"]).reshape(-1)
 
 
 def compute_ess(samples: np.ndarray) -> np.ndarray:
-    """Approximate effective sample size for each flattened parameter dimension."""
+    """Compute bulk effective sample size for each flattened parameter dimension via ArviZ."""
 
-    flattened = _flatten_parameter(samples)
-    chains, draws, features = flattened.shape
-    ess = np.empty(features, dtype=float)
-    for feature_index in range(features):
-        acov = np.mean(
-            [_autocorrelation_1d(flattened[chain_index, :, feature_index]) for chain_index in range(chains)],
-            axis=0,
-        )
-        positive_sum = 0.0
-        for lag in range(1, draws - 1, 2):
-            pair_sum = acov[lag] + acov[lag + 1]
-            if pair_sum <= 0.0:
-                break
-            positive_sum += pair_sum
-        ess[feature_index] = chains * draws / (1.0 + 2.0 * positive_sum)
-    return ess
+    return np.asarray(az.ess(_diagnostic_dataset(samples), method="bulk")["parameter"]).reshape(-1)
 
 
 def _nanmax_or_nan(values: np.ndarray) -> float:

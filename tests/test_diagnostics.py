@@ -4,32 +4,20 @@ from __future__ import annotations
 
 import unittest
 
+import arviz as az
 import numpy as np
-from src.analysis.diagnostics import compute_rhat, diagnostic_group_rows, plot_diagnostics_summary
-
-
-def _standard_rhat(flattened: np.ndarray) -> np.ndarray:
-    """Compute standard R-hat for flattened chain draws."""
-
-    chains, draws, features = flattened.shape
-    chain_means = flattened.mean(axis=1)
-    overall_mean = chain_means.mean(axis=0)
-    between = draws * ((chain_means - overall_mean) ** 2).sum(axis=0) / (chains - 1)
-    within = flattened.var(axis=1, ddof=1).mean(axis=0)
-    variance_estimate = ((draws - 1) / draws) * within + between / draws
-    ratio = np.divide(
-        variance_estimate,
-        within,
-        out=np.full(features, np.nan, dtype=float),
-        where=within != 0,
-    )
-    return np.sqrt(ratio)
+from src.analysis.diagnostics import (
+    compute_ess,
+    compute_rhat,
+    diagnostic_group_rows,
+    plot_diagnostics_summary,
+)
 
 
 class ComputeRhatTests(unittest.TestCase):
     """Verify split-R-hat semantics."""
 
-    def test_compute_rhat_matches_manual_split(self) -> None:
+    def test_compute_rhat_matches_arviz_split(self) -> None:
         samples = np.asarray(
             [
                 [[0.0], [1.0], [10.0], [11.0]],
@@ -37,16 +25,9 @@ class ComputeRhatTests(unittest.TestCase):
             ]
         )
 
-        expected = _standard_rhat(
-            np.asarray(
-                [
-                    [[0.0], [1.0]],
-                    [[0.0], [1.0]],
-                    [[10.0], [11.0]],
-                    [[10.0], [11.0]],
-                ]
-            )
-        )
+        expected = np.asarray(
+            az.rhat(az.convert_to_dataset({"parameter": samples}), method="split")["parameter"]
+        ).reshape(-1)
 
         np.testing.assert_allclose(compute_rhat(samples), expected)
         self.assertGreater(float(compute_rhat(samples)[0]), 1.0)
@@ -108,7 +89,7 @@ class ComputeRhatTests(unittest.TestCase):
         self.assertEqual(figure.axes[0].get_xlabel(), "R̂")
         self.assertEqual(figure.axes[1].get_xlabel(), "ESS")
 
-    def test_compute_rhat_returns_nan_for_zero_within_chain_variance(self) -> None:
+    def test_compute_rhat_matches_arviz_for_zero_within_chain_variance(self) -> None:
         samples = np.asarray(
             [
                 [[1.0], [1.0], [1.0], [1.0]],
@@ -116,9 +97,20 @@ class ComputeRhatTests(unittest.TestCase):
             ]
         )
 
-        result = compute_rhat(samples)
+        expected = np.asarray(
+            az.rhat(az.convert_to_dataset({"parameter": samples}), method="split")["parameter"]
+        ).reshape(-1)
 
-        self.assertTrue(np.isnan(result[0]))
+        np.testing.assert_allclose(compute_rhat(samples), expected)
+
+    def test_compute_ess_matches_arviz_bulk(self) -> None:
+        samples = np.random.default_rng(7).normal(size=(2, 16, 3))
+
+        expected = np.asarray(
+            az.ess(az.convert_to_dataset({"parameter": samples}), method="bulk")["parameter"]
+        ).reshape(-1)
+
+        np.testing.assert_allclose(compute_ess(samples), expected)
 
 
 if __name__ == "__main__":

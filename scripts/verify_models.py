@@ -10,6 +10,14 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+from src.judges.token_constraints import (
+    collect_verdict_token_forms,
+    resolve_verdict_label_token_ids,
+    resolve_verdict_token_ids,
+)
+from src.judges.token_constraints import (
+    resolve_eos_token_ids as shared_resolve_eos_token_ids,
+)
 from src.schemas import ExperimentConfig, unique_model_requests
 
 LOGGER = logging.getLogger("verify_models")
@@ -71,44 +79,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def encode_token_ids(tokenizer: Any, text: str) -> list[int]:
-    """Encode text without adding special tokens when tokenizer supports it."""
-
-    try:
-        token_ids = tokenizer.encode(text, add_special_tokens=False)
-    except TypeError:
-        token_ids = tokenizer.encode(text)
-    return [int(token_id) for token_id in token_ids]
-
-
-def resolve_verdict_label_token_ids(
-    token_forms: dict[str, list[int]],
-) -> tuple[list[int], list[int]]:
-    """Return single-token encodings for A and B separately."""
-
-    a_ids: set[int] = set()
-    b_ids: set[int] = set()
-    for form in ("A", " A"):
-        token_ids = token_forms[form]
-        if len(token_ids) == 1:
-            a_ids.add(token_ids[0])
-    for form in ("B", " B"):
-        token_ids = token_forms[form]
-        if len(token_ids) == 1:
-            b_ids.add(token_ids[0])
-    return sorted(a_ids), sorted(b_ids)
-
-
 def resolve_eos_token_ids(tokenizer: Any) -> list[int]:
     """Return EOS token IDs available on the tokenizer."""
 
-    eos_token_ids = getattr(tokenizer, "eos_token_ids", None)
-    if eos_token_ids:
-        return [int(token_id) for token_id in eos_token_ids]
-    eos_token_id = getattr(tokenizer, "eos_token_id", None)
-    if eos_token_id is not None:
-        return [int(eos_token_id)]
-    return []
+    try:
+        return shared_resolve_eos_token_ids(tokenizer)
+    except ValueError:
+        return []
 
 
 def verify_model(model_name: str, trust_remote_code: bool) -> ModelVerificationResult:
@@ -130,14 +107,10 @@ def verify_model(model_name: str, trust_remote_code: bool) -> ModelVerificationR
         )
 
     try:
-        token_forms = {
-            "A": encode_token_ids(tokenizer, "A"),
-            "B": encode_token_ids(tokenizer, "B"),
-            " A": encode_token_ids(tokenizer, " A"),
-            " B": encode_token_ids(tokenizer, " B"),
-        }
+        token_forms = collect_verdict_token_forms(tokenizer)
         verdict_a_token_ids, verdict_b_token_ids = resolve_verdict_label_token_ids(token_forms)
-        eos_token_ids = resolve_eos_token_ids(tokenizer)
+        verdict_token_ids = resolve_verdict_token_ids(tokenizer)
+        eos_token_ids = shared_resolve_eos_token_ids(tokenizer)
     except Exception as exc:
         return ModelVerificationResult(
             model=model_name,
@@ -154,7 +127,7 @@ def verify_model(model_name: str, trust_remote_code: bool) -> ModelVerificationR
         has_chat_template=hasattr(tokenizer, "apply_chat_template"),
         verdict_a_token_ids=verdict_a_token_ids,
         verdict_b_token_ids=verdict_b_token_ids,
-        verdict_token_ids=sorted(set(verdict_a_token_ids + verdict_b_token_ids)),
+        verdict_token_ids=verdict_token_ids,
         eos_token_ids=eos_token_ids,
         token_forms=token_forms,
     )

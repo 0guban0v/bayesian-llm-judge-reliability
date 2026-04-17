@@ -17,25 +17,21 @@ class UniqueModelRequestsTests(unittest.TestCase):
             JudgeConfig(
                 id="judge-a",
                 model="model-1",
-                prompt_template="pointwise",
                 trust_remote_code=False,
             ),
             JudgeConfig(
                 id="judge-b",
                 model="model-1",
-                prompt_template="pointwise",
                 trust_remote_code=False,
             ),
             JudgeConfig(
                 id="judge-c",
                 model="model-1",
-                prompt_template="pointwise",
                 trust_remote_code=True,
             ),
             JudgeConfig(
                 id="judge-d",
                 model="model-2",
-                prompt_template="pointwise",
                 trust_remote_code=False,
             ),
         ]

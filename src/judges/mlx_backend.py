@@ -8,6 +8,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from src.judges.token_constraints import (
+    encode_token_ids,
+    resolve_eos_token_ids,
+    resolve_verdict_token_ids,
+)
+
 logger = logging.getLogger(__name__)
 
 VERDICT_PREFIX = "FINAL VERDICT: "
@@ -75,41 +81,19 @@ def format_chat_prompt(tokenizer: Any, prompt: str) -> str:
 def _encode_token_ids(tokenizer: Any, text: str) -> list[int]:
     """Encode text into token IDs without adding special tokens."""
 
-    try:
-        token_ids = tokenizer.encode(text, add_special_tokens=False)
-    except TypeError:
-        token_ids = tokenizer.encode(text)
-    return [int(token_id) for token_id in token_ids]
+    return encode_token_ids(tokenizer, text)
 
 
 def _resolve_verdict_token_ids(tokenizer: Any) -> list[int]:
     """Return single-token encodings for the constrained verdict labels."""
 
-    verdict_a_ids: set[int] = set()
-    verdict_b_ids: set[int] = set()
-    for candidate in ("A", " A"):
-        encoded = _encode_token_ids(tokenizer, candidate)
-        if len(encoded) == 1:
-            verdict_a_ids.add(encoded[0])
-    for candidate in ("B", " B"):
-        encoded = _encode_token_ids(tokenizer, candidate)
-        if len(encoded) == 1:
-            verdict_b_ids.add(encoded[0])
-    if not verdict_a_ids or not verdict_b_ids:
-        raise ValueError("Tokenizer does not provide single-token verdict labels for both A and B.")
-    return sorted(verdict_a_ids | verdict_b_ids)
+    return resolve_verdict_token_ids(tokenizer)
 
 
 def _resolve_eos_token_ids(tokenizer: Any) -> list[int]:
     """Return EOS token IDs required to stop after one verdict token."""
 
-    eos_token_ids = getattr(tokenizer, "eos_token_ids", None)
-    if eos_token_ids:
-        return [int(token_id) for token_id in eos_token_ids]
-    eos_token_id = getattr(tokenizer, "eos_token_id", None)
-    if eos_token_id is not None:
-        return [int(eos_token_id)]
-    raise ValueError("Tokenizer does not expose EOS token IDs for constrained generation.")
+    return resolve_eos_token_ids(tokenizer)
 
 
 def make_verdict_processor(tokenizer: Any) -> Callable[[Any, Any], Any]:

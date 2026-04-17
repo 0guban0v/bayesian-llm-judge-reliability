@@ -24,7 +24,7 @@ uv run python -m huggingface_hub.commands.huggingface_cli login
 make full
 ```
 
-`make judge` resumes from existing judge logs by skipping already recorded `(item_id, prompt_order)` pairs. `make matrix`, `make validate`, `make infer`, `make diagnostics`, and `make plots` rebuild derived artifacts from current logs and should be run only after all intended judges finish.
+`make judge` resumes from existing judge logs by skipping already recorded `(item_id, prompt_order)` pairs. Existing logs without config sidecars are treated as unsupported legacy artifacts and must be deleted before rerunning under current prompt protocol. `make matrix`, `make validate`, `make infer`, `make diagnostics`, and `make plots` rebuild derived artifacts from current logs and should be run only after all intended judges finish.
 
 `make infer` now fails fast on incomplete judge coverage. If any configured judge column is missing or partially observed, inference exits with a coverage error instead of fitting a posterior on an invalid matrix.
 
@@ -32,9 +32,11 @@ make full
 
 `make plots` always regenerates `figures/prior_predictive_probabilities.png`.
 
-If a compatible posterior archive is present, it also regenerates `figures/judge_reliability_ridge.png`.
+If a compatible posterior archive is present, it also regenerates `figures/judge_reliability_ridge.png`. Legacy posterior archives are unsupported and must be regenerated with current inference code.
 
-If the posterior archive includes `theta_source` and `source_ids` from the `source_hier` model variant, `make plots` also writes `figures/judge_reliability_by_source.png`. Posterior-backed figures that are not valid for current run are removed so notebook status matches current artifacts.
+If the posterior archive includes `theta_source` and `source_ids` from the `source_hier` model variant, `make plots` also writes `figures/judge_reliability_by_source.png`.
+
+Checked-in source-plot and report-export policies now live under `analysis.*` in the experiment YAML. In particular, `analysis.plots.max_sources` controls how many sources appear in source-aware outputs, and `analysis.report.*` controls standout-case selection and response synopsis length.
 
 ## Stepwise Run
 

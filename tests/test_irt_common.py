@@ -99,11 +99,12 @@ class SourceHierModelTests(unittest.TestCase):
             "source_ids": np.asarray(["source-a", "source-b"]),
         }
 
-        _, samples = run_mcmc(config, observations)
+        _, samples, ppc_summary = run_mcmc(config, observations)
 
         self.assertIn("theta", samples)
         self.assertIn("tau_theta", samples)
         self.assertIn("theta_source", samples)
+        self.assertIn("judge_accuracy_ppc_mean", ppc_summary)
 
 
 class BuildModelPriorsTests(unittest.TestCase):
