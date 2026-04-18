@@ -33,8 +33,12 @@ def run_and_save_posterior(config: ExperimentConfig, matrix: pl.DataFrame | None
     prepared_matrix = matrix if matrix is not None else pl.read_parquet(config.data.matrix_path)
     assert_complete_judge_coverage(prepared_matrix, [judge.id for judge in config.judges])
     observations = load_matrix_observations(prepared_matrix)
-    _, samples, ppc_summary = run_mcmc(config, observations)
+    idata, samples, ppc_summary = run_mcmc(config, observations)
     output_path = config.inference.posterior_path
+    inferencedata_path = config.inference.inferencedata_path
+    inferencedata_path.parent.mkdir(parents=True, exist_ok=True)
+    idata.to_netcdf(inferencedata_path)
+    logger.info("saved_inferencedata=%s", inferencedata_path)
     save_posterior(
         output_path,
         samples,

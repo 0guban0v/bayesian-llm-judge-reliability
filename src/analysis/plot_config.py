@@ -12,9 +12,15 @@ EXPORT_DPI = 600
 
 FONT_SIZE_TICK: float = 9.0
 FONT_SIZE_ANNOTATION: float = 8.5
+FONT_SIZE_TITLE: float = 10.0
+
+COLOR_TEXT_DARK: str = "#202124"
+COLOR_TEXT_LIGHT: str = "#ffffff"
+COLOR_DIAGNOSTIC: str = "#0f4c81"
+COLOR_SURFACE: str = "#ffffff"
 
 JUDGE_COLOR_PINS = {
-    "deepseek-r1-distill-qwen-14b": "#0f4c81",
+    "deepseek-r1-distill-qwen-14b": COLOR_DIAGNOSTIC,
     "deepseek-r1-distill-qwen-7b": "#4a4a4a",
     "mistral-7b-instruct-v0-3": "#d95f02",
     "qwen2-5-7b-instruct": "#4daf4a",
@@ -28,11 +34,16 @@ JUDGE_LABEL_PINS = {
     "gemma-2-9b-it": "Gemma 9B",
 }
 SOURCE_COLOR_PINS = {
-    "livebench-reasoning": "#1f78b4",
-    "livebench-math": "#33a02c",
-    "livecodebench": "#e31a1c",
-    "mmlu-pro-computer science": "#ff7f00",
-    "mmlu-pro-math": "#6a3d9a",
+    "livebench-reasoning": "#1f4e79",
+    "livebench-math": "#2f6b55",
+    "livecodebench": "#7a3e48",
+    "mmlu-pro-computer science": "#5a6f8f",
+    "mmlu-pro-math": "#7b5a8c",
+    "mmlu-pro-chemistry": "#8a6a43",
+    "mmlu-pro-physics": "#3f6f78",
+    "mmlu-pro-philosophy": "#6a5b4d",
+    "mmlu-pro-health": "#4f7a68",
+    "mmlu-pro-economics": "#4e5d6c",
 }
 SOURCE_LABEL_PINS = {
     "livebench-reasoning": "LB Reasoning",
