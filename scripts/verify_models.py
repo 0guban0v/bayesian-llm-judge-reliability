@@ -7,7 +7,6 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 from src.judges.token_constraints import (
@@ -77,15 +76,6 @@ def parse_args() -> argparse.Namespace:
         help="Emit machine-readable JSON instead of human-oriented logs.",
     )
     return parser.parse_args()
-
-
-def resolve_eos_token_ids(tokenizer: Any) -> list[int]:
-    """Return EOS token IDs available on the tokenizer."""
-
-    try:
-        return shared_resolve_eos_token_ids(tokenizer)
-    except ValueError:
-        return []
 
 
 def verify_model(model_name: str, trust_remote_code: bool) -> ModelVerificationResult:

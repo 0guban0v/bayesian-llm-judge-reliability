@@ -12,8 +12,11 @@ import numpy as np
 import polars as pl
 from matplotlib.ticker import FuncFormatter
 
-from src.analysis.figure_paths import DIAGNOSTICS_SUMMARY_STEM, figure_base_path
-from src.analysis.plot_config import EXPORT_DPI, style_axis
+from src.analysis.figure_paths import (
+    DIAGNOSTICS_SUMMARY_STEM,
+    figure_base_path,
+)
+from src.analysis.plot_config import COLOR_DIAGNOSTIC, EXPORT_DPI, FONT_SIZE_TICK, style_axis
 from src.analysis.posterior_archive import load_posterior
 from src.logging_utils import configure_logging, format_table_for_log
 from src.schemas import ExperimentConfig
@@ -191,9 +194,6 @@ def plot_diagnostics_summary_rows(
         sharey=True,
     )
     group_positions = np.arange(len(groups))[::-1]
-    rhat_axis.axvline(1.0, color="#6b7280", linewidth=1.0, linestyle="--")
-    rhat_axis.axvline(1.01, color="#6b7280", linewidth=1.0, linestyle="--")
-    ess_axis.axvline(400.0, color="#6b7280", linewidth=1.0, linestyle="--")
     for y_position, group in zip(group_positions, groups, strict=False):
         rhat_values = np.asarray(group["rhat"], dtype=float)
         ess_values = np.asarray(group["ess"], dtype=float)
@@ -202,7 +202,7 @@ def plot_diagnostics_summary_rows(
             rhat_values,
             y_position + offsets,
             s=14,
-            color="#0f4c81",
+            color=COLOR_DIAGNOSTIC,
             alpha=0.8,
             linewidths=0.0,
         )
@@ -210,13 +210,13 @@ def plot_diagnostics_summary_rows(
             ess_values,
             y_position + offsets,
             s=14,
-            color="#0f4c81",
+            color=COLOR_DIAGNOSTIC,
             alpha=0.8,
             linewidths=0.0,
         )
     labels = [str(group["label"]) for group in groups]
     rhat_axis.set_yticks(group_positions)
-    rhat_axis.set_yticklabels(labels, fontsize=9)
+    rhat_axis.set_yticklabels(labels, fontsize=FONT_SIZE_TICK)
     rhat_axis.set_xlabel("R̂")
     ess_axis.set_xlabel("ESS")
     rhat_max = max(
@@ -231,21 +231,11 @@ def plot_diagnostics_summary_rows(
     formatter = FuncFormatter(_trim_tick_zeros)
     rhat_axis.xaxis.set_major_formatter(formatter)
     ess_axis.xaxis.set_major_formatter(formatter)
-    ess_axis.text(
-        0.98,
-        0.98,
-        f"{divergence_count} divergences",
-        transform=ess_axis.transAxes,
-        ha="right",
-        va="top",
-        fontsize=9,
-        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9, "pad": 2.5},
-    )
     style_axis(rhat_axis)
     style_axis(ess_axis)
     ess_axis.set_yticks([])
     rhat_axis.set_yticks(group_positions)
-    rhat_axis.set_yticklabels(labels, fontsize=9)
+    rhat_axis.set_yticklabels(labels, fontsize=FONT_SIZE_TICK)
     ess_axis.spines["left"].set_visible(False)
     ess_axis.tick_params(axis="y", left=False, labelleft=False)
     fig.subplots_adjust(left=0.25, right=0.98, bottom=0.15, top=0.96, wspace=0.12)
