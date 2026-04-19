@@ -10,6 +10,7 @@ Measure how reliable local LLM judges are on JudgeBench with Bayesian Item Respo
 - rebuilds a binary judge-by-item matrix from append-only JSONL logs
 - fits Bayesian IRT to separate judge reliability from item difficulty
 - produces posterior diagnostics, global judge figures, and source-aware comparison figures
+- logs tracked study runs to local MLflow with configs, metrics, posterior artifacts, and figures
 
 ## Current Setup
 
@@ -27,6 +28,28 @@ make pre-commit-install
 make setup-models
 make full
 ```
+
+## Tracked Study Runs
+
+Use the tracked workflow when you want experiment-result material in MLflow rather than repo-local comparison summaries.
+
+Run one tracked config:
+
+```bash
+make tracked-analysis CONFIG=configs/experiment_gpt_global.yaml
+```
+
+`tracked-analysis` is end-to-end: it samples or reloads items, resumes judge collection into JSONL logs,
+rebuilds the matrix from current logs, runs inference, and uploads artifacts to MLflow.
+
+Run the baseline plus the four split-by-variant study configs sequentially:
+
+```bash
+make tracked-study-all
+```
+
+Tracked runs log parameters, diagnostics, posterior summaries, figures, and generated report snippets to local
+MLflow under `mlruns/`.
 
 ## Docs
 

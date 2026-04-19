@@ -41,11 +41,10 @@ def build_log_path(logs_dir: Path, judge_id: str) -> Path:
     return logs_dir / f"{judge_id}.jsonl"
 
 
-def check_or_write_config_sidecar(log_path: Path, judge: JudgeConfig) -> None:
-    """Fail fast if the judge config changed since logs were written; write sidecar on first run."""
+def judge_metadata_fields(judge: JudgeConfig) -> dict[str, object]:
+    """Return the embedded compatibility fields for a judge run."""
 
-    sidecar = log_path.with_suffix(".config.json")
-    fingerprint: dict[str, object] = {
+    return {
         "model": judge.model,
         "max_tokens": judge.max_tokens,
         "trust_remote_code": judge.trust_remote_code,
@@ -53,28 +52,42 @@ def check_or_write_config_sidecar(log_path: Path, judge: JudgeConfig) -> None:
         "prompt_variant": FIXED_PROMPT_VARIANT,
         "prompt_protocol_version": PROMPT_PROTOCOL_VERSION,
     }
-    if sidecar.exists() and not log_path.exists():
-        sidecar.write_text(json.dumps(fingerprint, indent=2, ensure_ascii=True), encoding="utf-8")
-    elif sidecar.exists():
-        stored: dict[str, object] = json.loads(sidecar.read_text(encoding="utf-8"))
-        if stored != fingerprint:
-            changed = sorted(k for k in fingerprint if fingerprint[k] != stored.get(k))
-            raise ValueError(
-                f"Judge '{judge.id}' config has changed since logs were written "
-                f"(changed fields: {changed}). "
-                f"Delete {log_path} and {sidecar} to re-run with the new config."
-            )
-    elif log_path.exists():
-        raise ValueError(
-            f"Judge '{judge.id}' log is unsupported because it has no config sidecar. "
-            f"Delete {log_path} and re-run with the current prompt protocol."
-        )
-    else:
-        sidecar.write_text(json.dumps(fingerprint, indent=2, ensure_ascii=True), encoding="utf-8")
+
+
+def validate_log_metadata(log_path: Path, judge: JudgeConfig) -> None:
+    """Fail fast if an existing log was produced with different compatibility fields."""
+
+    if not log_path.exists():
+        return
+    expected = judge_metadata_fields(judge)
+    with log_path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if "item_key" not in record:
+                raise ValueError(
+                    f"Judge '{judge.id}' log is unsupported because it predates split-qualified item keys. "
+                    f"Delete {log_path} and re-run with the current prompt protocol."
+                )
+            required_keys = set(expected)
+            if not required_keys.issubset(record):
+                raise ValueError(
+                    f"Judge '{judge.id}' log is unsupported because it predates embedded log metadata. "
+                    f"Delete {log_path} and re-run with the current prompt protocol."
+                )
+            stored = {key: record[key] for key in expected}
+            if stored != expected:
+                changed = sorted(key for key in expected if expected[key] != stored.get(key))
+                raise ValueError(
+                    f"Judge '{judge.id}' config has changed since logs were written "
+                    f"(changed fields: {changed}, line: {line_number}). Delete {log_path} "
+                    "to re-run with the new config."
+                )
 
 
 def load_processed_keys(log_path: Path) -> set[tuple[str, str]]:
-    """Return previously logged `(item_id, prompt_order)` pairs for resumable runs."""
+    """Return previously logged `(item_key, prompt_order)` pairs for resumable runs."""
 
     if not log_path.exists():
         return set()
@@ -84,7 +97,12 @@ def load_processed_keys(log_path: Path) -> set[tuple[str, str]]:
             if not line.strip():
                 continue
             record = json.loads(line)
-            processed.add((record["item_id"], record["prompt_order"]))
+            if "item_key" not in record:
+                raise ValueError(
+                    f"Judge log {log_path} is unsupported because it predates split-qualified item keys. "
+                    "Delete it and re-run with the current prompt protocol."
+                )
+            processed.add((record["item_key"], record["prompt_order"]))
     return processed
 
 
@@ -137,13 +155,19 @@ def judge_item(
     parsed_verdict_literal = cast(Literal["A", "B"], parsed_verdict) if parsed_verdict is not None else None
     return JudgeResult(
         item_id=item["item_id"],
+        item_key=item["item_key"],
         judge_id=judge.id,
         timestamp=datetime.now(UTC),
         source=item["source"],
         question=item["question"],
         ground_truth_label=item["label"],
         prompt_variant=FIXED_PROMPT_VARIANT,
+        prompt_protocol_version=PROMPT_PROTOCOL_VERSION,
         prompt_order=cast(Literal["original", "reversed"], prompt_order),
+        model=judge.model,
+        max_tokens=judge.max_tokens,
+        trust_remote_code=judge.trust_remote_code,
+        reverse_order=judge.reverse_order,
         raw_response=raw_response,
         parsed_verdict=parsed_verdict_literal,
         correct=correct,
@@ -166,13 +190,13 @@ def run_judge(
     """Evaluate a configured judge over all pending items."""
 
     log_path = build_log_path(config.data.logs_dir, judge.id)
-    check_or_write_config_sidecar(log_path, judge)
+    validate_log_metadata(log_path, judge)
     processed = load_processed_keys(log_path)
     prompt_orders = ("original", "reversed") if judge.reverse_order else ("original",)
     tasks: list[tuple[dict[str, Any], str]] = []
     for item in items:
         for prompt_order in prompt_orders:
-            key = (item["item_id"], prompt_order)
+            key = (item["item_key"], prompt_order)
             if key not in processed:
                 tasks.append((item, prompt_order))
     logger.info(
@@ -215,11 +239,17 @@ def run_judge(
     return completed
 
 
-def run_all(config: ExperimentConfig, judge_id: str | None, limit: int | None) -> None:
+def run_all(
+    config: ExperimentConfig,
+    judge_id: str | None,
+    limit: int | None,
+    *,
+    refresh_items: bool = False,
+) -> None:
     """Run the judge evaluation pipeline."""
 
     config.ensure_directories()
-    items = load_or_prepare_items(config)
+    items = load_or_prepare_items(config, refresh=refresh_items)
     if limit is not None:
         items = items.head(limit)
     materialized_items = items.to_dicts()

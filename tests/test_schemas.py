@@ -47,6 +47,19 @@ class InferenceConfigTests(unittest.TestCase):
         self.assertEqual(config.analysis.report.standout_case_limit, 3)
         self.assertEqual(config.analysis.report.response_synopsis_chars, 120)
 
+    def test_from_yaml_loads_tracking_defaults(self) -> None:
+        config = ExperimentConfig.from_yaml("configs/experiment.yaml")
+
+        self.assertEqual(config.tracking.backend, "mlflow")
+        self.assertEqual(config.tracking.experiment_name, "bayesian-llm-judge-reliability")
+        self.assertTrue(config.tracking.tracking_dir.is_absolute())
+        self.assertEqual(config.tracking_uri, (Path.cwd() / "mlruns").resolve().as_uri())
+        self.assertEqual(
+            config.tracked_output_dir,
+            Path.cwd() / ".tracked_runs" / config.experiment.name,
+        )
+        self.assertFalse(config.tracked_output_dir.is_relative_to(config.tracking.tracking_dir))
+
     def test_analysis_config_defaults_are_available_without_yaml_block(self) -> None:
         analysis = AnalysisConfig()
 
@@ -92,6 +105,24 @@ class InferenceConfigTests(unittest.TestCase):
     def test_prior_config_rejects_unknown_distribution(self) -> None:
         with self.assertRaisesRegex(ValueError, "Input should be 'normal' or 'lognormal'"):
             PriorConfig(dist="gamma", loc=0.0, scale=1.0)
+
+    def test_split_variant_study_configs_resolve_tracking_and_model_fields(self) -> None:
+        config_paths = [
+            "configs/experiment_gpt_global.yaml",
+            "configs/experiment_gpt_source_hier.yaml",
+            "configs/experiment_claude_global.yaml",
+            "configs/experiment_claude_source_hier.yaml",
+        ]
+
+        configs = [ExperimentConfig.from_yaml(path) for path in config_paths]
+
+        self.assertEqual([config.data.splits for config in configs], [["gpt"], ["gpt"], ["claude"], ["claude"]])
+        self.assertEqual(
+            [config.model.variant for config in configs],
+            ["global", "source_hier", "global", "source_hier"],
+        )
+        self.assertTrue(all(config.model.type == "2PL" for config in configs))
+        self.assertTrue(all(config.tracking.tracking_dir == Path.cwd() / "mlruns" for config in configs))
 
 
 if __name__ == "__main__":

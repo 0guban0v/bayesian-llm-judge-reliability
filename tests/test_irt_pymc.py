@@ -79,6 +79,7 @@ class PyMCModelTests(unittest.TestCase):
         ]
         matrix = pl.DataFrame(
             {
+                "item_key": ["gpt:item-1", "gpt:item-2"],
                 "item_id": ["item-1", "item-2"],
                 "label": ["A>B", "B>A"],
                 "original_id": [1, 2],

@@ -42,8 +42,8 @@ def validate_items(items: pl.DataFrame) -> None:
 
     if items.height == 0:
         raise ValueError("No JudgeBench items were loaded.")
-    if items.get_column("item_id").is_duplicated().any():
-        raise ValueError("Sampled JudgeBench items contain duplicate item IDs.")
+    if items.get_column("item_key").is_duplicated().any():
+        raise ValueError("Sampled JudgeBench items contain duplicate split-qualified item keys.")
     invalid_labels = items.filter(~pl.col("label").is_in(["A>B", "B>A"]))
     if invalid_labels.height > 0:
         raise ValueError("Sampled JudgeBench items contain unsupported labels.")

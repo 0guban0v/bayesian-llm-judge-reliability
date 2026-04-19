@@ -126,6 +126,14 @@ class AnalysisConfig(BaseModel):
     report: AnalysisReportConfig = Field(default_factory=AnalysisReportConfig)
 
 
+class TrackingConfig(BaseModel):
+    """Experiment tracking configuration."""
+
+    backend: Literal["mlflow"] = "mlflow"
+    experiment_name: str = "bayesian-llm-judge-reliability"
+    tracking_dir: Path = Path("mlruns")
+
+
 class ExperimentConfig(BaseModel):
     """Single source of truth for the experiment pipeline."""
 
@@ -135,6 +143,7 @@ class ExperimentConfig(BaseModel):
     inference: InferenceConfig
     model: IRTConfig
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
+    tracking: TrackingConfig = Field(default_factory=TrackingConfig)
     _project_root: Path = PrivateAttr(default=Path.cwd())
 
     @model_validator(mode="after")
@@ -162,6 +171,7 @@ class ExperimentConfig(BaseModel):
         config.data.raw_dir = _resolve_project_path(project_root, config.data.raw_dir)
         config.data.logs_dir = _resolve_project_path(project_root, config.data.logs_dir)
         config.inference.output_dir = _resolve_project_path(project_root, config.inference.output_dir)
+        config.tracking.tracking_dir = _resolve_project_path(project_root, config.tracking.tracking_dir)
         return config
 
     @property
@@ -176,6 +186,30 @@ class ExperimentConfig(BaseModel):
 
         return self._project_root / "report"
 
+    @property
+    def tracking_uri(self) -> str:
+        """Return the MLflow tracking URI for this experiment."""
+
+        return self.tracking.tracking_dir.resolve().as_uri()
+
+    @property
+    def tracked_output_dir(self) -> Path:
+        """Return the config-scoped local staging directory for tracked run artifacts."""
+
+        return self._project_root / ".tracked_runs" / self.experiment.name
+
+    @property
+    def tracked_figures_dir(self) -> Path:
+        """Return the config-scoped figure staging directory for tracked runs."""
+
+        return self.tracked_output_dir / "figures"
+
+    @property
+    def tracked_report_generated_dir(self) -> Path:
+        """Return the config-scoped generated-report staging directory for tracked runs."""
+
+        return self.tracked_output_dir / "report_generated"
+
     def ensure_directories(self) -> None:
         """Create the directories used by the pipeline."""
 
@@ -186,6 +220,9 @@ class ExperimentConfig(BaseModel):
             self.inference.output_dir,
             self.figures_dir,
             self.report_dir,
+            self.tracking.tracking_dir,
+            self.tracked_figures_dir,
+            self.tracked_report_generated_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -194,13 +231,19 @@ class JudgeResult(BaseModel):
     """Structured JSONL record for a single judge decision."""
 
     item_id: str
+    item_key: str
     judge_id: str
     timestamp: datetime
     source: str
     question: str
     ground_truth_label: Literal["A>B", "B>A"]
     prompt_variant: str
+    prompt_protocol_version: str
     prompt_order: Literal["original", "reversed"]
+    model: str
+    max_tokens: int = Field(gt=0)
+    trust_remote_code: bool = False
+    reverse_order: bool = False
     raw_response: str
     parsed_verdict: Literal["A", "B"] | None
     correct: bool | None

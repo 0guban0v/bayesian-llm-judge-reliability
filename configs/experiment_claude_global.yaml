@@ -1,18 +1,17 @@
 experiment:
-  name: bayesian-llm-judge-reliability-theta-half
+  name: bayesian-llm-judge-reliability-claude-global
   seed: 7
-  date: "2026-04-07"
+  date: "2026-04-18"
 
 data:
   source: judgebench
   hf_dataset: ScalerLab/JudgeBench
   splits:
-    - gpt
     - claude
   subset_size: 500
   categories: []
-  output_dir: data/processed
-  raw_dir: data/raw
+  output_dir: data/processed/studies/claude_global
+  raw_dir: data/raw/studies/claude_global
   logs_dir: data/logs
   item_file: judgebench_items.parquet
   matrix_file: judge_matrix.parquet
@@ -55,26 +54,22 @@ inference:
   num_samples: 1000
   num_chains: 2
   target_accept_prob: 0.85
-  output_dir: data/processed/posteriors
-  file_name: irt_2pl_posterior_theta_half.npz
+  output_dir: data/processed/studies/claude_global/posteriors
+  file_name: irt_2pl_claude_global_posterior.npz
 
 model:
   type: 2PL
-  variant: source_hier
+  variant: global
   priors:
     theta:
       dist: normal
       loc: 0.0
-      scale: 0.5
+      scale: 1.0
     b:
       dist: normal
       loc: 0.0
       scale: 2.0
     a:
-      dist: lognormal
-      loc: 0.0
-      scale: 0.5
-    tau_theta:
       dist: lognormal
       loc: 0.0
       scale: 0.5
@@ -86,3 +81,8 @@ analysis:
     standout_judge_id: deepseek-r1-distill-qwen-14b
     standout_case_limit: 3
     response_synopsis_chars: 120
+
+tracking:
+  backend: mlflow
+  experiment_name: bayesian-llm-judge-reliability
+  tracking_dir: mlruns

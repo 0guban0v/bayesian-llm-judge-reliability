@@ -41,8 +41,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def generated_dir(config: ExperimentConfig) -> Path:
-    path = config.report_dir / "generated"
+def generated_dir(config: ExperimentConfig, output_dir: Path | None = None) -> Path:
+    path = output_dir if output_dir is not None else config.report_dir / "generated"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -136,7 +136,7 @@ def standout_cases(
 
     focus_logs = (
         original_logs.filter(pl.col("judge_id").eq(focus_judge))
-        .group_by("item_id", maintain_order=True)
+        .group_by("item_key", maintain_order=True)
         .agg(
             [
                 pl.col("raw_response").first().alias("raw_response"),
@@ -146,12 +146,14 @@ def standout_cases(
     )
     available_judge_ids = [j for j in judge_ids if j in filtered.columns]
     selected = (
-        items.join(filtered.select(["item_id", *available_judge_ids]), on="item_id", how="inner")
-        .join(focus_logs, on="item_id", how="left")
-        .sort("item_id")
+        items.join(filtered.select(["item_key", *available_judge_ids]), on="item_key", how="inner")
+        .join(focus_logs, on="item_key", how="left")
+        .sort(["split", "item_id"])
         .select(
             [
+                "item_key",
                 "item_id",
+                "split",
                 "source",
                 "label",
                 "response_a",
@@ -169,8 +171,10 @@ def write_results_exports(
     config: ExperimentConfig,
     matrix: pl.DataFrame,
     posterior: dict[str, np.ndarray] | None,
+    *,
+    output_dir: Path | None = None,
 ) -> None:
-    output_dir = generated_dir(config)
+    output_dir = generated_dir(config, output_dir=output_dir)
     judge_ids = [judge.id for judge in config.judges]
     accuracy_by_judge = observed_accuracy(matrix, judge_ids)
     if posterior is None:
@@ -242,8 +246,10 @@ def write_results_exports(
 def write_diagnostics_exports(
     config: ExperimentConfig,
     posterior: dict[str, np.ndarray] | None,
+    *,
+    output_dir: Path | None = None,
 ) -> None:
-    output_dir = generated_dir(config)
+    output_dir = generated_dir(config, output_dir=output_dir)
     if posterior is None:
         write_text(
             output_dir / "diagnostics_summary.tex",
@@ -284,8 +290,13 @@ def _response_synopsis(text: str, max_chars: int) -> str:
     return snippet[:max_chars] + ("\u2026" if len(snippet) > max_chars else "")
 
 
-def write_case_exports(config: ExperimentConfig, items: pl.DataFrame | None) -> None:
-    output_dir = generated_dir(config)
+def write_case_exports(
+    config: ExperimentConfig,
+    items: pl.DataFrame | None,
+    *,
+    output_dir: Path | None = None,
+) -> None:
+    output_dir = generated_dir(config, output_dir=output_dir)
     if items is None:
         write_text(output_dir / "standout_cases.tex", compile_safe_note("Item subset is missing for this run."))
         return
