@@ -22,6 +22,7 @@ from src.schemas import ExperimentConfig
 logger = logging.getLogger(__name__)
 
 ITEM_COLUMNS = [
+    "item_key",
     "item_id",
     "original_id",
     "split",
@@ -109,7 +110,12 @@ def _dataset_to_frame(dataset_name: str, split_name: str) -> pl.DataFrame:
                 "response_B": "response_b",
             }
         )
-        .with_columns(pl.lit(split_name).alias("split"))
+        .with_columns(
+            [
+                pl.lit(split_name).alias("split"),
+                pl.format("{}:{}", pl.lit(split_name), pl.col("item_id").cast(pl.String)).alias("item_key"),
+            ]
+        )
         .select(ITEM_COLUMNS)
     )
 
@@ -143,12 +149,24 @@ def write_frame(frame: pl.DataFrame, path: Path) -> None:
     frame.write_parquet(path)
 
 
+def validate_cached_items(items: pl.DataFrame, item_path: Path) -> None:
+    """Require cached item parquets to contain the current split-qualified key schema."""
+
+    if "item_key" not in items.columns:
+        raise ValueError(
+            f"Cached JudgeBench items at {item_path} are unsupported because they predate split-qualified item keys. "
+            "Re-run with --refresh-items to rebuild the cached item subset."
+        )
+
+
 def load_or_prepare_items(config: ExperimentConfig, refresh: bool = False) -> pl.DataFrame:
     """Load cached item parquet or build a fresh JudgeBench subset."""
 
     config.ensure_directories()
     if config.data.item_path.exists() and not refresh:
-        return pl.read_parquet(config.data.item_path)
+        items = pl.read_parquet(config.data.item_path)
+        validate_cached_items(items, config.data.item_path)
+        return items
     items = load_judgebench_frame(config)
     write_frame(items, config.data.item_path)
     raw_snapshot_path = config.data.raw_dir / "judgebench_subset.jsonl"
@@ -170,13 +188,20 @@ def load_judge_logs(logs_dir: Path) -> pl.DataFrame:
     if not rows:
         return pl.DataFrame(
             schema={
+                "item_key": pl.String,
                 "item_id": pl.String,
                 "judge_id": pl.String,
                 "prompt_order": pl.String,
                 "correct": pl.Boolean,
             }
         )
-    return pl.DataFrame(rows)
+    logs = pl.DataFrame(rows)
+    if "item_key" not in logs.columns:
+        raise ValueError(
+            f"Judge logs in {logs_dir} are unsupported because they predate split-qualified item keys. "
+            "Delete them and re-run judges with the current pipeline."
+        )
+    return logs
 
 
 def build_binary_matrix(
@@ -191,7 +216,7 @@ def build_binary_matrix(
         matrix = items.select(sorted(ITEM_METADATA_COLUMNS))
     else:
         pivoted = pivot_original_judgments(first_judgments)
-        matrix = items.select(sorted(ITEM_METADATA_COLUMNS)).join(pivoted, on="item_id", how="left")
+        matrix = items.select(sorted(ITEM_METADATA_COLUMNS)).join(pivoted, on="item_key", how="left")
 
     for judge_id in judge_ids:
         if judge_id not in matrix.columns:

@@ -109,11 +109,11 @@ def load_matrix_observations(matrix: pl.DataFrame | Path) -> dict[str, Any]:
 
     prepared_matrix = pl.read_parquet(matrix) if isinstance(matrix, Path) else matrix
     judge_ids = [column for column in prepared_matrix.columns if column not in ITEM_METADATA_COLUMNS]
-    item_ids = prepared_matrix.get_column("item_id").to_list()
+    item_ids = prepared_matrix.get_column("item_key").to_list()
     source_ids = prepared_matrix.get_column("source").unique(maintain_order=True).to_list()
     item_lookup = pl.DataFrame(
         {
-            "item_id": item_ids,
+            "item_key": item_ids,
             "item_idx": np.arange(len(item_ids), dtype=np.int32),
             "source": prepared_matrix.get_column("source"),
         }
@@ -131,15 +131,15 @@ def load_matrix_observations(matrix: pl.DataFrame | Path) -> dict[str, Any]:
         }
     )
     observations = (
-        prepared_matrix.select(["item_id", *judge_ids])
+        prepared_matrix.select(["item_key", *judge_ids])
         .unpivot(
             on=judge_ids,
-            index="item_id",
+            index="item_key",
             variable_name="judge_id",
             value_name="correct",
         )
         .drop_nulls("correct")
-        .join(item_lookup, on="item_id", how="left")
+        .join(item_lookup, on="item_key", how="left")
         .join(judge_lookup, on="judge_id", how="left")
         .join(source_lookup, on="source", how="left")
         .sort(["item_idx", "judge_idx"])

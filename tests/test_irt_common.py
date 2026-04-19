@@ -23,6 +23,7 @@ class LoadMatrixObservationsTests(unittest.TestCase):
     def test_load_matrix_observations_preserves_item_and_judge_order(self) -> None:
         matrix = pl.DataFrame(
             {
+                "item_key": ["gpt:item-1", "gpt:item-2", "claude:item-3"],
                 "item_id": ["item-1", "item-2", "item-3"],
                 "label": ["A>B", "B>A", "A>B"],
                 "original_id": [1, 2, 3],
@@ -47,7 +48,7 @@ class LoadMatrixObservationsTests(unittest.TestCase):
         )
         np.testing.assert_array_equal(
             observations["item_ids"],
-            np.asarray(["item-1", "item-2", "item-3"]),
+            np.asarray(["gpt:item-1", "gpt:item-2", "claude:item-3"]),
         )
         self.assertEqual(observations["n_judges"], 2)
         self.assertEqual(observations["n_items"], 3)

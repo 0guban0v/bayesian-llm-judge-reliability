@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 .claude/
 .mplconfig/
+.tmp/
 profiles/
 
 /AGENTS.md
@@ -15,6 +16,8 @@ profiles/
 .uv-cache/
 .ruff_cache/
 .mypy_cache/
+mlruns/
+.tracked_runs/
 
 logs/*.log
 archive/logs/*.log

@@ -1,0 +1,88 @@
+experiment:
+  name: bayesian-llm-judge-reliability-gpt-global
+  seed: 7
+  date: "2026-04-18"
+
+data:
+  source: judgebench
+  hf_dataset: ScalerLab/JudgeBench
+  splits:
+    - gpt
+  subset_size: 500
+  categories: []
+  output_dir: data/processed/studies/gpt_global
+  raw_dir: data/raw/studies/gpt_global
+  logs_dir: data/logs
+  item_file: judgebench_items.parquet
+  matrix_file: judge_matrix.parquet
+
+judges:
+  - id: deepseek-r1-distill-qwen-14b
+    backend: mlx
+    model: deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+    max_tokens: 10
+    trust_remote_code: false
+    reverse_order: false
+  - id: deepseek-r1-distill-qwen-7b
+    backend: mlx
+    model: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+    max_tokens: 10
+    trust_remote_code: false
+    reverse_order: false
+  - id: qwen2-5-7b-instruct
+    backend: mlx
+    model: Qwen/Qwen2.5-7B-Instruct
+    max_tokens: 10
+    trust_remote_code: false
+    reverse_order: false
+  - id: mistral-7b-instruct-v0-3
+    backend: mlx
+    model: mistralai/Mistral-7B-Instruct-v0.3
+    max_tokens: 10
+    trust_remote_code: false
+    reverse_order: false
+  - id: gemma-2-9b-it
+    backend: mlx
+    model: google/gemma-2-9b-it
+    max_tokens: 10
+    trust_remote_code: false
+    reverse_order: false
+
+inference:
+  sampler: NUTS
+  num_warmup: 500
+  num_samples: 1000
+  num_chains: 2
+  target_accept_prob: 0.85
+  output_dir: data/processed/studies/gpt_global/posteriors
+  file_name: irt_2pl_gpt_global_posterior.npz
+
+model:
+  type: 2PL
+  variant: global
+  priors:
+    theta:
+      dist: normal
+      loc: 0.0
+      scale: 1.0
+    b:
+      dist: normal
+      loc: 0.0
+      scale: 2.0
+    a:
+      dist: lognormal
+      loc: 0.0
+      scale: 0.5
+
+analysis:
+  plots:
+    max_sources: 8
+  report:
+    standout_judge_id: deepseek-r1-distill-qwen-14b
+    standout_case_limit: 3
+    response_synopsis_chars: 120
+
+tracking:
+  backend: mlflow
+  experiment_name: bayesian-llm-judge-reliability
+  tracking_dir: mlruns

@@ -170,7 +170,7 @@ def validate_posterior_plot_inputs(
 
     matrix_judge_ids = np.asarray(judge_columns(matrix), dtype=str)
     validate_posterior_judge_order(matrix_judge_ids, posterior)
-    matrix_item_ids = matrix.get_column("item_id").cast(pl.String).to_numpy().astype(str)
+    matrix_item_ids = matrix.get_column("item_key").cast(pl.String).to_numpy().astype(str)
     posterior_item_ids = np.asarray(posterior["item_ids"], dtype=str)
     if not np.array_equal(matrix_item_ids, posterior_item_ids):
         raise ValueError(

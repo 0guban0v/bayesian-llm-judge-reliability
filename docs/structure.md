@@ -18,21 +18,20 @@ These two diagrams are meant to orient a cold reviewer quickly. First read pipel
 
 ```mermaid
 flowchart LR
-    C[Experiment config] --> I[Prepare items]
-    I --> IP[(Items)]
+    C[Experiment config] --> I[Prepare items with item_key]
+    I --> IP[(Items parquet)]
     I --> RS[(Raw subset)]
 
-    C --> J[Run judges]
+    C --> J[Run judges or resume logs]
     IP --> J
-    J --> LJ[(Judge logs)]
-    J --> SC[(Run metadata)]
+    J --> LJ[(Judge logs with embedded metadata)]
 
-    C --> M[Build matrix]
+    C --> M[Build matrix from logs]
     IP --> M
     LJ --> M
     M --> MP[(Judge matrix)]
 
-    C --> V[Validate coverage]
+    C --> V[Validate items and matrix]
     MP --> V
     V -->|complete| N[Fit Bayesian IRT]
     V -->|incomplete| X[Stop]
@@ -40,15 +39,18 @@ flowchart LR
     C --> N
     MP --> N
     N --> P[(Posterior archive)]
+    N --> ML[(MLflow run)]
 
     C --> D[Diagnostics]
     P --> D
     D --> FD[(Diagnostic figures)]
+    FD --> ML
 
     C --> PL[Plot results]
     MP --> PL
     P --> PL
     PL --> FF[(Result figures)]
+    FF --> ML
 
     C --> R[Export report tables]
     IP --> R
@@ -56,6 +58,7 @@ flowchart LR
     MP --> R
     P --> R
     R --> TX[(Report tables)]
+    TX --> ML
 ```
 
 ### Conceptual statistical model
@@ -94,13 +97,15 @@ flowchart TB
   `src/models/infer.py` owns end-to-end inference orchestration, while `src/models/irt_pymc.py` focuses on backend-specific model construction and sampling.
 - `src/analysis/`: diagnostics, figures, posterior queries
   `src/analysis/posterior_utils.py` owns reusable posterior-data helpers so plots and exports can share one implementation.
+- `src/tracking.py` and `src/analysis/run_tracked_analysis.py`: MLflow-backed tracked study runs
+  Why: tracked-analysis now runs the full experiment path and stores split/variant study outputs in MLflow rather than a second local comparison registry.
 
 ## Critical Building Blocks
 
 - `data/logs/*.jsonl` are the canonical run records.
   What: append-only judge outputs with item metadata and parsed verdicts.
   Why: matrix, validation, and posterior artifacts can be rebuilt from logs without trusting in-memory run state.
-  Current contract: logs must have matching `*.config.json` sidecars. Legacy logs without sidecars are unsupported.
+  Current contract: each JSONL record now embeds prompt protocol and judge metadata, and references sampled items via split-qualified `item_key`. Logs that predate embedded metadata or split-qualified keys are unsupported.
 
 - `src/judges/mlx_backend.py` implements constrained verdict-only decoding.
   What: assistant-side prefill plus a logits processor that allows only a verdict token and EOS.
@@ -113,10 +118,10 @@ flowchart TB
 - `src/judges/runner.py` executes judges sequentially and clears MLX model cache between judges.
   What: one-process orchestration with explicit cache cleanup after each judge.
   Why: local MLX / Metal memory behavior made multi-model lifecycle management part of the architecture.
-  Current contract: sidecar fingerprints now include prompt protocol version, so protocol changes invalidate old logs instead of silently reusing them.
+  Current contract: embedded log metadata includes prompt protocol version, so protocol changes invalidate old logs instead of silently reusing them.
 
 - Judge execution is resumable at the log layer.
-  What: runner skips already logged `(item_id, prompt_order)` pairs when appending to a judge JSONL.
+  What: runner skips already logged `(item_key, prompt_order)` pairs when appending to a judge JSONL.
   Why: interrupted judge runs can continue safely, but downstream artifacts are only meaningful once intended judge coverage is complete.
 
 - Posterior analysis now requires current schema archives.
