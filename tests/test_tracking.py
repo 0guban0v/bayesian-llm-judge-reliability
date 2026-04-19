@@ -80,12 +80,21 @@ class TrackingHelperTests(unittest.TestCase):
 
     def test_cpu_name_uses_environment_fallback_when_platform_reports_nothing(self) -> None:
         with (
+            patch("src.tracking.sys.platform", "linux"),
             patch("src.tracking.platform.processor", return_value=""),
             patch("src.tracking.platform.uname") as uname_mock,
             patch.dict("src.tracking.os.environ", {"PROCESSOR_IDENTIFIER": "Intel64 Family 6 Model 191"}),
         ):
             uname_mock.return_value.processor = ""
             self.assertEqual(cpu_name(), "Intel64 Family 6 Model 191")
+
+    def test_cpu_name_prefers_sysctl_brand_string_on_darwin(self) -> None:
+        with (
+            patch("src.tracking.sys.platform", "darwin"),
+            patch("src.tracking._read_command_output", return_value="Apple M4 Max"),
+            patch("src.tracking.platform.processor", return_value="arm"),
+        ):
+            self.assertEqual(cpu_name(), "Apple M4 Max")
 
     def test_system_telemetry_params_adds_apple_soc_when_available(self) -> None:
         with (

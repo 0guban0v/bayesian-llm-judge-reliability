@@ -258,18 +258,27 @@ def plot_trace_theta_tau_theta(posterior: dict[str, np.ndarray]) -> plt.Figure:
         gridspec_kw={"width_ratios": [1.45, 1.0], "wspace": 0.2, "hspace": 0.55},
         squeeze=False,
     )
+    max_chain_count = max(chain_draws.shape[0] for _, _, chain_draws in row_specs)
+
+    def chain_alpha(chain_index: int) -> float:
+        if max_chain_count <= 1:
+            return 0.75
+        step = min(0.5 / (max_chain_count - 1), 0.18)
+        return min(0.45 + step * chain_index, 0.95)
+
     for row_index, (row_label, judge_id, chain_draws) in enumerate(row_specs):
         trace_axis, density_axis = axes[row_index]
         judge_color = color_map[judge_id]
         n_chains, n_draws = chain_draws.shape
         draw_index = np.arange(n_draws)
         for chain_index in range(n_chains):
+            alpha = chain_alpha(chain_index)
             trace_axis.plot(
                 draw_index,
                 chain_draws[chain_index],
                 color=judge_color,
                 linewidth=1.0,
-                alpha=0.45 + 0.2 * chain_index,
+                alpha=alpha,
             )
             hist, edges = np.histogram(chain_draws[chain_index], bins=36, density=True)
             centers = 0.5 * (edges[:-1] + edges[1:])
@@ -279,7 +288,7 @@ def plot_trace_theta_tau_theta(posterior: dict[str, np.ndarray]) -> plt.Figure:
                 hist[positive_mask],
                 color=judge_color,
                 linewidth=1.1,
-                alpha=0.45 + 0.2 * chain_index,
+                alpha=alpha,
             )
         trace_axis.text(
             -0.18,

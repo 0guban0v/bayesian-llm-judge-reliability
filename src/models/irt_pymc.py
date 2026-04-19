@@ -108,6 +108,13 @@ def run_mcmc(
             return_inferencedata=True,
             progressbar=logger.isEnabledFor(logging.INFO),
         )
+        if config.inference.save_log_likelihood:
+            pm.compute_log_likelihood(
+                idata,
+                var_names=["correct"],
+                extend_inferencedata=True,
+                progressbar=False,
+            )
         ppc_idata = pm.sample_posterior_predictive(
             idata,
             var_names=["correct"],

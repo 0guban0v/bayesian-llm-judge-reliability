@@ -44,7 +44,6 @@ from src.analysis.posterior_utils import (
     validate_posterior_plot_inputs,
 )
 from src.analysis.report_exports import (
-    write_case_exports,
     write_diagnostics_exports,
     write_results_exports,
 )
@@ -163,14 +162,12 @@ def main() -> None:
         output_dir = config.tracked_report_generated_dir
         write_results_exports(config, matrix, posterior, output_dir=output_dir)
         write_diagnostics_exports(config, posterior, output_dir=output_dir)
-        write_case_exports(config, items, output_dir=output_dir)
         _log_diagnostic_metrics(posterior)
         log_posterior_metrics(config, posterior)
         for artifact_name in (
             "judge_summary.tex",
             "pairwise_summary.tex",
             "diagnostics_summary.tex",
-            "standout_cases.tex",
         ):
             log_artifact(output_dir / artifact_name, "report_generated")
         figure_names = [

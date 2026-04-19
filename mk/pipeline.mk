@@ -45,6 +45,7 @@ tracked-study-all:
 	@$(MAKE) tracked-analysis CONFIG=configs/experiment_gpt_source_hier.yaml
 	@$(MAKE) tracked-analysis CONFIG=configs/experiment_claude_global.yaml
 	@$(MAKE) tracked-analysis CONFIG=configs/experiment_claude_source_hier.yaml
+	@$(MAKE) report-exports CONFIG=configs/experiment.yaml
 
 clean-generated:
 	rm -rf data/raw/*
@@ -56,6 +57,7 @@ clean-generated:
 	rm -rf figures/*.png
 	rm -rf report/generated/*
 	rm -rf mlruns
+	rm -f mlflow.db mlflow.db-shm mlflow.db-wal
 	rm -rf .tracked_runs
 	rm -rf logs/*.log
 
