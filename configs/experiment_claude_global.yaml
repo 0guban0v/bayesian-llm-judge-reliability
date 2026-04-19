@@ -52,8 +52,9 @@ inference:
   sampler: NUTS
   num_warmup: 500
   num_samples: 1000
-  num_chains: 2
-  target_accept_prob: 0.85
+  num_chains: 4
+  target_accept_prob: 0.90
+  save_log_likelihood: true
   output_dir: data/processed/studies/claude_global/posteriors
   file_name: irt_2pl_claude_global_posterior.npz
 
@@ -77,12 +78,9 @@ model:
 analysis:
   plots:
     max_sources: 8
-  report:
-    standout_judge_id: deepseek-r1-distill-qwen-14b
-    standout_case_limit: 3
-    response_synopsis_chars: 120
 
 tracking:
   backend: mlflow
   experiment_name: bayesian-llm-judge-reliability
-  tracking_dir: mlruns
+  tracking_db: mlflow.db
+  artifact_dir: mlruns

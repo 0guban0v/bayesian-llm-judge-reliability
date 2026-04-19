@@ -17,6 +17,8 @@ profiles/
 .ruff_cache/
 .mypy_cache/
 mlruns/
+mlflow.db
+mlflow.db-*
 .tracked_runs/
 
 logs/*.log

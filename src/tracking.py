@@ -79,6 +79,10 @@ def _read_command_output(command: list[str]) -> str | None:
 def cpu_name() -> str:
     """Return the best available CPU / SoC name for the current host."""
 
+    if sys.platform == "darwin":
+        apple_cpu = _read_command_output(["sysctl", "-n", "machdep.cpu.brand_string"])
+        if apple_cpu is not None:
+            return apple_cpu
     candidates = [
         platform.processor(),
         platform.uname().processor,
@@ -88,8 +92,6 @@ def cpu_name() -> str:
         value = candidate.strip()
         if value and value.lower() != "unknown":
             return value
-    if sys.platform == "darwin":
-        return _read_command_output(["sysctl", "-n", "machdep.cpu.brand_string"]) or "unknown"
     return "unknown"
 
 
@@ -126,6 +128,20 @@ def _mlflow():
     return mlflow
 
 
+def _ensure_experiment(config: ExperimentConfig) -> str:
+    """Return an MLflow experiment id, creating the experiment with explicit artifact root if needed."""
+
+    mlflow = _mlflow()
+    client = mlflow.MlflowClient()
+    existing = client.get_experiment_by_name(config.tracking.experiment_name)
+    if existing is not None:
+        return str(existing.experiment_id)
+    return client.create_experiment(
+        config.tracking.experiment_name,
+        artifact_location=config.tracking_artifact_uri,
+    )
+
+
 def file_sha256(path: Path) -> str:
     """Return the SHA256 digest for a file."""
 
@@ -149,8 +165,8 @@ def tracked_run(config: ExperimentConfig) -> Iterator[object]:
 
     mlflow = _mlflow()
     mlflow.set_tracking_uri(config.tracking_uri)
-    mlflow.set_experiment(config.tracking.experiment_name)
-    with mlflow.start_run(run_name=run_name(config)) as run:
+    experiment_id = _ensure_experiment(config)
+    with mlflow.start_run(experiment_id=experiment_id, run_name=run_name(config)) as run:
         mlflow.set_tags(
             {
                 "experiment_name": config.experiment.name,
@@ -180,6 +196,7 @@ def log_config(config: ExperimentConfig) -> None:
             "num_samples": config.inference.num_samples,
             "num_chains": config.inference.num_chains,
             "target_accept_prob": config.inference.target_accept_prob,
+            "save_log_likelihood": str(config.inference.save_log_likelihood).lower(),
             "theta_prior_dist": config.model.priors.theta.dist,
             "theta_prior_loc": config.model.priors.theta.loc,
             "theta_prior_scale": config.model.priors.theta.scale,

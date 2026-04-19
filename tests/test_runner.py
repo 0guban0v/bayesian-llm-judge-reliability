@@ -11,7 +11,13 @@ from unittest.mock import patch
 
 import polars as pl
 from src.judges.prompts import FIXED_PROMPT_VARIANT, PROMPT_PROTOCOL_VERSION
-from src.judges.runner import judge_item, judge_metadata_fields, run_all, validate_log_metadata
+from src.judges.runner import (
+    judge_item,
+    judge_metadata_fields,
+    load_processed_keys,
+    run_all,
+    validate_log_metadata,
+)
 from src.schemas import ExperimentConfig
 
 
@@ -109,9 +115,68 @@ class JudgeItemTests(unittest.TestCase):
         self.assertEqual(result.model, judge.model)
         self.assertTrue(result.correct)
 
+    def test_judge_result_rejects_unknown_jsonl_fields(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        item = {
+            "item_key": "gpt:item-1",
+            "item_id": "item-1",
+            "split": "gpt",
+            "source": "s1",
+            "question": "q1",
+            "response_a": "a1",
+            "response_b": "b1",
+            "label": "A>B",
+        }
+
+        with (
+            patch("src.judges.runner.generate_text", return_value="FINAL VERDICT: A"),
+            patch("src.judges.runner.time.perf_counter", side_effect=[0.0, 0.01]),
+            patch("src.judges.runner.datetime") as datetime_mock,
+        ):
+            datetime_mock.now.return_value = datetime(2026, 4, 16, tzinfo=UTC)
+            result = judge_item(judge, item, "original")
+
+        payload = result.to_json_dict()
+        payload["unexpected_field"] = "unexpected"
+
+        with self.assertRaisesRegex(ValueError, "Extra inputs are not permitted|unexpected_field"):
+            type(result).model_validate(payload)
+
 
 class LogMetadataTests(unittest.TestCase):
     """Verify embedded log metadata enforces prompt protocol compatibility."""
+
+    def build_log_record(
+        self,
+        judge_id: str,
+        prompt_order: str = "original",
+        **overrides: object,
+    ) -> dict[str, object]:
+        """Return a valid persisted judge-log row for validation tests."""
+
+        record = {
+            "item_key": "gpt:item-1",
+            "item_id": "item-1",
+            "judge_id": judge_id,
+            "timestamp": "2026-04-16T00:00:00+00:00",
+            "source": "s1",
+            "question": "q1",
+            "ground_truth_label": "A>B",
+            "prompt_variant": FIXED_PROMPT_VARIANT,
+            "prompt_protocol_version": PROMPT_PROTOCOL_VERSION,
+            "prompt_order": prompt_order,
+            "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+            "max_tokens": 8,
+            "trust_remote_code": False,
+            "reverse_order": False,
+            "raw_response": "FINAL VERDICT: A",
+            "parsed_verdict": "A",
+            "correct": True,
+            "latency_ms": 10,
+        }
+        record.update(overrides)
+        return record
 
     def test_judge_metadata_fields_include_prompt_protocol_fields(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
@@ -136,12 +201,7 @@ class LogMetadataTests(unittest.TestCase):
     def test_validate_log_metadata_accepts_matching_embedded_metadata(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
         judge = config.judges[0]
-        record = {
-            "item_key": "gpt:item-1",
-            "item_id": "item-1",
-            "prompt_order": "original",
-            **judge_metadata_fields(judge),
-        }
+        record = self.build_log_record(judge.id, **judge_metadata_fields(judge))
 
         with tempfile.TemporaryDirectory() as temp_dir:
             log_path = Path(temp_dir) / f"{judge.id}.jsonl"
@@ -152,19 +212,14 @@ class LogMetadataTests(unittest.TestCase):
     def test_validate_log_metadata_rejects_mixed_metadata_later_in_file(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
         judge = config.judges[0]
-        first_record = {
-            "item_key": "gpt:item-1",
-            "item_id": "item-1",
-            "prompt_order": "original",
+        first_record = self.build_log_record(judge.id, **judge_metadata_fields(judge))
+        second_record = self.build_log_record(
+            judge.id,
+            item_key="gpt:item-2",
+            item_id="item-2",
             **judge_metadata_fields(judge),
-        }
-        second_record = {
-            "item_key": "gpt:item-2",
-            "item_id": "item-2",
-            "prompt_order": "original",
-            **judge_metadata_fields(judge),
-            "max_tokens": judge.max_tokens + 1,
-        }
+        )
+        second_record["max_tokens"] = judge.max_tokens + 1
 
         with tempfile.TemporaryDirectory() as temp_dir:
             log_path = Path(temp_dir) / f"{judge.id}.jsonl"
@@ -175,6 +230,59 @@ class LogMetadataTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, r"changed fields: \['max_tokens'\], line: 2"):
                 validate_log_metadata(log_path, judge)
+
+    def test_validate_log_metadata_rejects_missing_required_resume_fields(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        record = self.build_log_record(judge.id, **judge_metadata_fields(judge))
+        del record["prompt_order"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"log is malformed at line 1: Field required"):
+                validate_log_metadata(log_path, judge)
+
+    def test_validate_log_metadata_rejects_invalid_prompt_order_value(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        record = self.build_log_record(judge.id, prompt_order="orig", **judge_metadata_fields(judge))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"log is malformed at line 1"):
+                validate_log_metadata(log_path, judge)
+
+    def test_validate_log_metadata_rejects_unknown_extra_field_on_disk(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        record = self.build_log_record(
+            judge.id,
+            **judge_metadata_fields(judge),
+            unexpected_field="unexpected",
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"log is malformed at line 1"):
+                validate_log_metadata(log_path, judge)
+
+    def test_load_processed_keys_rejects_malformed_record(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        record = self.build_log_record(judge.id, prompt_order="orig", **judge_metadata_fields(judge))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"Judge log .* is malformed at line 1"):
+                load_processed_keys(log_path)
 
 
 if __name__ == "__main__":

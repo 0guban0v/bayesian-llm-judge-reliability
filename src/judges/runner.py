@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 
+from pydantic import ValidationError
+
 from src.data.loader import load_or_prepare_items
 from src.judges.mlx_backend import clear_model_cache, generate_text
 from src.judges.parsers import parse_correctness, parse_verdict, swap_verdict
@@ -70,6 +72,17 @@ def validate_log_metadata(log_path: Path, judge: JudgeConfig) -> None:
                     f"Judge '{judge.id}' log is unsupported because it predates split-qualified item keys. "
                     f"Delete {log_path} and re-run with the current prompt protocol."
                 )
+            try:
+                parsed_record = JudgeResult.model_validate(record)
+            except ValidationError as exc:
+                raise ValueError(
+                    f"Judge '{judge.id}' log is malformed at line {line_number}: {exc.errors()[0]['msg']}."
+                ) from exc
+            if parsed_record.judge_id != judge.id:
+                raise ValueError(
+                    f"Judge '{judge.id}' log is malformed at line {line_number}; expected judge_id "
+                    f"'{judge.id}', found '{parsed_record.judge_id}'."
+                )
             required_keys = set(expected)
             if not required_keys.issubset(record):
                 raise ValueError(
@@ -93,7 +106,7 @@ def load_processed_keys(log_path: Path) -> set[tuple[str, str]]:
         return set()
     processed: set[tuple[str, str]] = set()
     with log_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
+        for line_number, line in enumerate(handle, start=1):
             if not line.strip():
                 continue
             record = json.loads(line)
@@ -102,7 +115,13 @@ def load_processed_keys(log_path: Path) -> set[tuple[str, str]]:
                     f"Judge log {log_path} is unsupported because it predates split-qualified item keys. "
                     "Delete it and re-run with the current prompt protocol."
                 )
-            processed.add((record["item_key"], record["prompt_order"]))
+            try:
+                parsed_record = JudgeResult.model_validate(record)
+            except ValidationError as exc:
+                raise ValueError(
+                    f"Judge log {log_path} is malformed at line {line_number}: {exc.errors()[0]['msg']}."
+                ) from exc
+            processed.add((parsed_record.item_key, parsed_record.prompt_order))
     return processed
 
 

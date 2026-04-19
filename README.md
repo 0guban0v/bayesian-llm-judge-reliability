@@ -48,8 +48,12 @@ Run the baseline plus the four split-by-variant study configs sequentially:
 make tracked-study-all
 ```
 
+`tracked-study-all` finishes with a pooled `report-exports` pass that generates the cross-run
+`model_comparison.tex` table. That table is a bounded research output: matched split-wise
+PSIS-LOO/WAIC comparison for `global` versus `source_hier` within the `2PL` family only.
+
 Tracked runs log parameters, diagnostics, posterior summaries, figures, and generated report snippets to local
-MLflow under `mlruns/`.
+MLflow with SQLite metadata in `mlflow.db` and file artifacts in `mlruns/`.
 
 ## Docs
 
