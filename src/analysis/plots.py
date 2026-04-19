@@ -3,28 +3,35 @@
 from __future__ import annotations
 
 import argparse
+import colorsys
 import logging
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
+from matplotlib.colors import to_rgb
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 from src.analysis.figure_paths import (
     JUDGE_ACCURACY_PPC_STEM,
     JUDGE_RELIABILITY_BY_SOURCE_STEM,
     JUDGE_RELIABILITY_RIDGE_STEM,
-    PRIOR_PREDICTIVE_STEM,
+    SEPARATION_STEM,
+    TRACE_THETA_TAU_STEM,
     figure_base_path,
     remove_figure_output,
 )
 from src.analysis.plot_config import (
+    COLOR_SURFACE,
+    COLOR_TEXT_DARK,
+    COLOR_TEXT_LIGHT,
     EXPORT_DPI,
     FONT_SIZE_ANNOTATION,
     FONT_SIZE_TICK,
-    JUDGE_LABEL_PINS,
+    FONT_SIZE_TITLE,
     judge_color_map,
+    judge_display_label,
     source_display_label,
     style_axis,
 )
@@ -40,7 +47,6 @@ from src.analysis.posterior_utils import (
     validate_posterior_plot_inputs,
 )
 from src.logging_utils import configure_logging
-from src.models.irt_common import build_model_priors, sample_prior_values
 from src.schemas import ExperimentConfig
 
 logger = logging.getLogger(__name__)
@@ -80,6 +86,8 @@ def cleanup_posterior_figure_outputs(
     keep_ridge: bool,
     keep_source: bool,
     keep_ppc: bool,
+    keep_trace: bool,
+    keep_separation: bool,
 ) -> None:
     """Remove posterior-backed figures that are not valid for current run."""
 
@@ -89,79 +97,20 @@ def cleanup_posterior_figure_outputs(
         remove_figure_output(figures_dir, JUDGE_RELIABILITY_BY_SOURCE_STEM)
     if not keep_ppc:
         remove_figure_output(figures_dir, JUDGE_ACCURACY_PPC_STEM)
+    if not keep_trace:
+        remove_figure_output(figures_dir, TRACE_THETA_TAU_STEM)
+    if not keep_separation:
+        remove_figure_output(figures_dir, SEPARATION_STEM)
 
 
-def sample_prior_predictive_probabilities(
-    matrix: pl.DataFrame,
-    config: ExperimentConfig,
-    *,
-    num_draws: int = 1000,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Sample prior predictive correctness probabilities and judge-average accuracies."""
+def _lighten_color(color: str, amount: float) -> str:
+    """Blend a color toward white by a fixed amount."""
 
-    priors = build_model_priors(config.model)
-    rng = np.random.default_rng(config.experiment.seed)
-    n_items = matrix.height
-    n_judges = len(config.judges)
-    theta = sample_prior_values(priors.theta, rng=rng, size=(num_draws, n_judges))
-    b = sample_prior_values(priors.b, rng=rng, size=(num_draws, n_items))
-    if config.model.type == "2PL":
-        a = sample_prior_values(priors.a, rng=rng, size=(num_draws, n_items))
-    else:
-        a = np.ones((num_draws, n_items))
-    if config.model.variant == "source_hier":
-        if priors.tau_theta is None:
-            raise ValueError("source_hier prior predictive simulation requires tau_theta")
-        source_ids = matrix.get_column("source").cast(pl.String).unique(maintain_order=True).to_list()
-        source_lookup = {source_id: index for index, source_id in enumerate(source_ids)}
-        item_source_idx = np.asarray(
-            [source_lookup[source_id] for source_id in matrix.get_column("source").cast(pl.String)],
-            dtype=int,
-        )
-        tau_theta = sample_prior_values(priors.tau_theta, rng=rng, size=(num_draws, n_judges))
-        theta_source = rng.normal(
-            loc=theta[:, :, None],
-            scale=tau_theta[:, :, None],
-            size=(num_draws, n_judges, len(source_ids)),
-        )
-        theta_by_item = np.take(theta_source, item_source_idx, axis=2)
-        logits = a[:, None, :] * (theta_by_item - b[:, None, :])
-    else:
-        logits = a[:, None, :] * (theta[:, :, None] - b[:, None, :])
-    probabilities = stable_sigmoid(logits)
-    return probabilities.reshape(-1), probabilities.mean(axis=2).reshape(-1)
-
-
-def plot_prior_predictive_probabilities(
-    matrix: pl.DataFrame,
-    config: ExperimentConfig,
-    *,
-    num_draws: int = 1000,
-) -> plt.Figure:
-    """Plot prior predictive judge-mean calibration on the probability scale."""
-
-    _, judge_means = sample_prior_predictive_probabilities(
-        matrix,
-        config,
-        num_draws=num_draws,
-    )
-    prior_color = "#7a8793"
-    fig, mean_axis = plt.subplots(figsize=(6.2, 3.8))
-    mean_axis.axvspan(0.45, 0.55, color="#d9dde3", alpha=0.55, zorder=0)
-    mean_axis.hist(
-        judge_means,
-        bins=30,
-        density=True,
-        histtype="step",
-        color=prior_color,
-        linewidth=1.4,
-    )
-    mean_axis.axvline(0.5, color="#9aa0a6", linestyle="--", linewidth=1.0)
-    mean_axis.set_xlabel("Prior predictive judge mean accuracy")
-    mean_axis.set_ylabel("Density")
-    style_axis(mean_axis)
-    fig.tight_layout()
-    return fig
+    red, green, blue = to_rgb(color)
+    hue, lightness, saturation = colorsys.rgb_to_hls(red, green, blue)
+    lightness = min(1.0, lightness + (1.0 - lightness) * amount)
+    red, green, blue = colorsys.hls_to_rgb(hue, lightness, saturation)
+    return f"#{int(red * 255):02x}{int(green * 255):02x}{int(blue * 255):02x}"
 
 
 def plot_judge_accuracy_ppc(
@@ -215,7 +164,7 @@ def plot_judge_accuracy_ppc(
 
     axis.set_yticks(np.arange(len(ordered_judge_ids)))
     axis.set_yticklabels(
-        [JUDGE_LABEL_PINS.get(judge_id, judge_id) for judge_id in reversed(ordered_judge_ids)],
+        [judge_display_label(judge_id) for judge_id in reversed(ordered_judge_ids)],
         fontsize=FONT_SIZE_TICK,
     )
     axis.set_xlabel("Accuracy")
@@ -227,7 +176,7 @@ def plot_judge_accuracy_ppc(
         ha="right",
         va="top",
         fontsize=FONT_SIZE_ANNOTATION,
-        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9, "pad": 2.5},
+        bbox={"facecolor": COLOR_SURFACE, "edgecolor": "none", "alpha": 0.9, "pad": 2.5},
     )
     style_axis(axis)
     fig.tight_layout()
@@ -270,7 +219,7 @@ def plot_judge_reliability_ridge(
         ridge_axis.text(
             label_x,
             baseline + peak_height * 0.48,
-            JUDGE_LABEL_PINS.get(judge_id, judge_id),
+            judge_display_label(judge_id),
             ha="left",
             va="center",
             fontsize=FONT_SIZE_TICK,
@@ -286,10 +235,182 @@ def plot_judge_reliability_ridge(
     return fig
 
 
+def plot_trace_theta_tau_theta(posterior: dict[str, np.ndarray]) -> plt.Figure:
+    """Plot chain traces and per-chain densities for judge-level theta and tau_theta."""
+
+    judge_ids = np.asarray(posterior["judge_ids"], dtype=str)
+    judge_labels = [judge_display_label(judge_id) for judge_id in judge_ids]
+    color_map = judge_color_map(judge_ids)
+    parameter_blocks: list[tuple[str, str, np.ndarray]] = [
+        ("theta", "theta", np.asarray(posterior["theta"], dtype=float))
+    ]
+    if "tau_theta" in posterior:
+        parameter_blocks.append(("tau_theta", "tau_theta", np.asarray(posterior["tau_theta"], dtype=float)))
+    row_specs: list[tuple[str, str, np.ndarray]] = []
+    for _parameter_name, symbol, values in parameter_blocks:
+        for judge_index, judge_label in enumerate(judge_labels):
+            row_specs.append((f"{symbol}\n{judge_label}", str(judge_ids[judge_index]), values[:, :, judge_index]))
+    n_rows = len(row_specs)
+    fig, axes = plt.subplots(
+        n_rows,
+        2,
+        figsize=(9.6, max(4.8, 1.05 * n_rows + 0.6)),
+        gridspec_kw={"width_ratios": [1.45, 1.0], "wspace": 0.2, "hspace": 0.55},
+        squeeze=False,
+    )
+    for row_index, (row_label, judge_id, chain_draws) in enumerate(row_specs):
+        trace_axis, density_axis = axes[row_index]
+        judge_color = color_map[judge_id]
+        n_chains, n_draws = chain_draws.shape
+        draw_index = np.arange(n_draws)
+        for chain_index in range(n_chains):
+            trace_axis.plot(
+                draw_index,
+                chain_draws[chain_index],
+                color=judge_color,
+                linewidth=1.0,
+                alpha=0.45 + 0.2 * chain_index,
+            )
+            hist, edges = np.histogram(chain_draws[chain_index], bins=36, density=True)
+            centers = 0.5 * (edges[:-1] + edges[1:])
+            positive_mask = hist > 0.0
+            density_axis.plot(
+                centers[positive_mask],
+                hist[positive_mask],
+                color=judge_color,
+                linewidth=1.1,
+                alpha=0.45 + 0.2 * chain_index,
+            )
+        trace_axis.text(
+            -0.18,
+            0.5,
+            row_label,
+            transform=trace_axis.transAxes,
+            ha="right",
+            va="center",
+            fontsize=FONT_SIZE_TICK,
+            color=judge_color,
+            fontweight="semibold",
+            linespacing=1.1,
+        )
+        if row_index == 0:
+            trace_axis.set_title("Trace", fontsize=FONT_SIZE_TITLE)
+            density_axis.set_title("Density", fontsize=FONT_SIZE_TITLE)
+        if row_index != n_rows - 1:
+            trace_axis.tick_params(axis="x", labelbottom=False)
+            density_axis.tick_params(axis="x", labelbottom=False)
+        else:
+            trace_axis.set_xlabel("Draw")
+            density_axis.set_xlabel("Value")
+        trace_axis.tick_params(axis="both", labelsize=FONT_SIZE_TICK - 0.5)
+        density_axis.tick_params(axis="both", labelsize=FONT_SIZE_TICK - 0.5)
+        style_axis(trace_axis)
+        style_axis(density_axis)
+    fig.subplots_adjust(left=0.3, right=0.98, bottom=0.08, top=0.96)
+    return fig
+
+
+def posterior_mean_item_probabilities(
+    matrix: pl.DataFrame,
+    posterior: dict[str, np.ndarray],
+) -> np.ndarray:
+    """Return posterior mean correctness probability for each judge-item pair."""
+
+    theta = flatten_draws(np.asarray(posterior["theta"], dtype=float))
+    b = flatten_draws(np.asarray(posterior["b"], dtype=float))
+    a = flatten_draws(np.asarray(posterior["a"], dtype=float)) if "a" in posterior else np.ones_like(b)
+    if has_source_reliability(posterior):
+        theta_source = np.asarray(posterior["theta_source"], dtype=float).reshape(
+            -1,
+            posterior["theta_source"].shape[2],
+            posterior["theta_source"].shape[3],
+        )
+        source_ids = [str(source_id) for source_id in posterior["source_ids"]]
+        source_lookup = {source_id: index for index, source_id in enumerate(source_ids)}
+        item_source_idx = np.asarray(
+            [source_lookup[str(source_id)] for source_id in matrix.get_column("source").cast(pl.String)],
+            dtype=int,
+        )
+        judge_term = np.take(theta_source, item_source_idx, axis=2)
+    else:
+        judge_term = theta[:, :, None]
+    logits = a[:, None, :] * (judge_term - b[:, None, :])
+    return stable_sigmoid(logits).mean(axis=0)
+
+
+def plot_separation_by_judge(
+    matrix: pl.DataFrame,
+    posterior: dict[str, np.ndarray],
+) -> plt.Figure:
+    """Plot judge-wise separation strips ordered by posterior mean item probability."""
+
+    judge_ids = np.asarray(posterior["judge_ids"], dtype=str)
+    judge_colors = judge_color_map(judge_ids)
+    predicted = posterior_mean_item_probabilities(matrix, posterior)
+    observed = matrix.select(judge_ids.tolist()).to_numpy().astype(float).T
+    ordering = np.argsort(flatten_draws(posterior["theta"]).mean(axis=0))[::-1]
+    ordered_judge_ids = [str(judge_ids[index]) for index in ordering]
+    n_judges = len(ordered_judge_ids)
+    fig, axes = plt.subplots(
+        n_judges,
+        1,
+        figsize=(8.6, max(5.4, 1.15 * n_judges + 0.55)),
+        sharex=True,
+        squeeze=False,
+    )
+    for row_index, judge_id in enumerate(ordered_judge_ids):
+        axis = axes[row_index, 0]
+        judge_index = int(np.where(judge_ids == judge_id)[0][0])
+        observed_values = observed[judge_index]
+        predicted_values = predicted[judge_index]
+        valid_mask = ~np.isnan(observed_values)
+        valid_observed = observed_values[valid_mask]
+        valid_predicted = predicted_values[valid_mask]
+        item_order = np.argsort(valid_predicted)
+        sorted_observed = valid_observed[item_order]
+        sorted_predicted = valid_predicted[item_order]
+        positions = np.arange(len(sorted_predicted))
+        judge_color = judge_colors[judge_id]
+        incorrect_color = _lighten_color(judge_color, 0.8)
+        separation_strip = np.where(sorted_observed > 0.5, 1.0, 0.0)[None, :]
+        strip_top = 0.22
+        curve_floor = 0.28
+        axis.imshow(
+            separation_strip,
+            cmap=plt.matplotlib.colors.ListedColormap([incorrect_color, judge_color]),
+            interpolation="nearest",
+            aspect="auto",
+            extent=(-0.5, len(sorted_predicted) - 0.5, 0.0, strip_top),
+        )
+        axis.axhline(strip_top, color=incorrect_color, linewidth=0.8, alpha=0.9)
+        axis.fill_between(positions, curve_floor, sorted_predicted, color=judge_color, alpha=0.12, linewidth=0.0)
+        axis.plot(positions, sorted_predicted, color=judge_color, linewidth=1.5)
+        axis.text(
+            0.03,
+            0.96,
+            judge_display_label(judge_id),
+            transform=axis.transAxes,
+            ha="left",
+            va="top",
+            fontsize=FONT_SIZE_TICK,
+            color=judge_color,
+            fontweight="semibold",
+        )
+        axis.set_ylim(0.0, 1.02)
+        axis.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
+        axis.tick_params(axis="y", pad=8)
+        axis.tick_params(axis="y", labelsize=FONT_SIZE_TICK - 0.5)
+        if row_index != n_judges - 1:
+            axis.tick_params(axis="x", bottom=False, labelbottom=False)
+        style_axis(axis)
+    fig.subplots_adjust(left=0.14, right=0.99, bottom=0.1, top=0.98, hspace=0.18)
+    return fig
+
+
 def staggered_heatmap_judge_labels(judge_ids: list[str]) -> list[str]:
     """Return centered heatmap labels with alternating vertical staggering."""
 
-    labels = [JUDGE_LABEL_PINS.get(judge_id, judge_id) for judge_id in judge_ids]
+    labels = [judge_display_label(judge_id) for judge_id in judge_ids]
     return [label if index % 2 == 0 else f"\n{label}" for index, label in enumerate(labels)]
 
 
@@ -347,7 +468,7 @@ def plot_judge_reliability_by_source(
     for row_index, _source_id in enumerate(ordered_sources):
         for column_index, _judge_id in enumerate(ordered_judge_ids):
             value = transposed_heatmap[row_index, column_index]
-            text_color = "white" if abs(value) > 0.45 * color_limit else "#202124"
+            text_color = COLOR_TEXT_LIGHT if abs(value) > 0.45 * color_limit else COLOR_TEXT_DARK
             ax.text(
                 column_index,
                 row_index,
@@ -384,14 +505,17 @@ def main() -> None:
     figures_dir = config.figures_dir
     figures_dir.mkdir(parents=True, exist_ok=True)
 
-    save_figure(
-        plot_prior_predictive_probabilities(matrix, config),
-        figure_base_path(figures_dir, PRIOR_PREDICTIVE_STEM),
-    )
     if not posterior_path.exists():
-        cleanup_posterior_figure_outputs(figures_dir, keep_ridge=False, keep_source=False, keep_ppc=False)
+        cleanup_posterior_figure_outputs(
+            figures_dir,
+            keep_ridge=False,
+            keep_source=False,
+            keep_ppc=False,
+            keep_trace=False,
+            keep_separation=False,
+        )
         logger.warning(
-            "posterior not found at %s; saved prior predictive figure only to %s",
+            "posterior not found at %s; no posterior-backed figures saved to %s",
             posterior_path,
             figures_dir,
         )
@@ -409,13 +533,28 @@ def main() -> None:
         plot_judge_reliability_ridge(posterior),
         figure_base_path(figures_dir, JUDGE_RELIABILITY_RIDGE_STEM),
     )
+    save_figure(
+        plot_trace_theta_tau_theta(posterior),
+        figure_base_path(figures_dir, TRACE_THETA_TAU_STEM),
+    )
+    save_figure(
+        plot_separation_by_judge(matrix, posterior),
+        figure_base_path(figures_dir, SEPARATION_STEM),
+    )
     if has_source_reliability(posterior):
         save_figure(
             plot_judge_reliability_by_source(matrix, posterior, max_sources=config.analysis.plots.max_sources),
             figure_base_path(figures_dir, JUDGE_RELIABILITY_BY_SOURCE_STEM),
         )
     else:
-        cleanup_posterior_figure_outputs(figures_dir, keep_ridge=True, keep_source=False, keep_ppc=True)
+        cleanup_posterior_figure_outputs(
+            figures_dir,
+            keep_ridge=True,
+            keep_source=False,
+            keep_ppc=True,
+            keep_trace=True,
+            keep_separation=True,
+        )
     logger.info("saved posterior figures to %s", figures_dir)
 
 
