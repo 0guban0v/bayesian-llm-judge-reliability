@@ -6,7 +6,7 @@ import logging
 
 import polars as pl
 
-ITEM_METADATA_COLUMNS = {"item_id", "original_id", "split", "source", "question", "label"}
+ITEM_METADATA_COLUMNS = {"item_key", "item_id", "original_id", "split", "source", "question", "label"}
 
 
 def judge_columns(matrix: pl.DataFrame) -> list[str]:
@@ -58,6 +58,7 @@ def first_original_judgments(
     if logs.height == 0:
         return pl.DataFrame(
             schema={
+                "item_key": pl.String,
                 "item_id": pl.String,
                 "judge_id": pl.String,
                 "correct_int": pl.Int8,
@@ -72,20 +73,21 @@ def first_original_judgments(
     if original_logs.height == 0:
         return pl.DataFrame(
             schema={
+                "item_key": pl.String,
                 "item_id": pl.String,
                 "judge_id": pl.String,
                 "correct_int": pl.Int8,
             }
         )
-    duplicate_judgments = original_logs.group_by(["item_id", "judge_id"]).len().filter(pl.col("len") > 1)
+    duplicate_judgments = original_logs.group_by(["item_key", "judge_id"]).len().filter(pl.col("len") > 1)
     if duplicate_judgments.height > 0 and duplicate_logger is not None:
         duplicate_logger.warning(
             "duplicate original-order judgments detected; keeping first result per item/judge pair duplicates=%s",
-            duplicate_judgments.select(["item_id", "judge_id", "len"]).to_dicts(),
+            duplicate_judgments.select(["item_key", "judge_id", "len"]).to_dicts(),
         )
     return (
-        original_logs.select(["log_order", "item_id", "judge_id", "correct_int"])
-        .group_by(["item_id", "judge_id"], maintain_order=True)
+        original_logs.select(["log_order", "item_key", "judge_id", "correct_int"])
+        .group_by(["item_key", "judge_id"], maintain_order=True)
         .agg(pl.col("correct_int").first().alias("correct_int"))
     )
 
@@ -94,9 +96,9 @@ def pivot_original_judgments(first_judgments: pl.DataFrame) -> pl.DataFrame:
     """Pivot first scored original-order judgments into a wide judge matrix."""
 
     if first_judgments.height == 0:
-        return pl.DataFrame(schema={"item_id": pl.String})
+        return pl.DataFrame(schema={"item_key": pl.String})
     return first_judgments.pivot(
-        index="item_id",
+        index="item_key",
         on="judge_id",
         values="correct_int",
         aggregate_function="first",

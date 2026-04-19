@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import polars as pl
@@ -71,6 +71,93 @@ class PyMCModelTests(unittest.TestCase):
         self.assertEqual(ppc_summary["judge_accuracy_ppc_mean"].shape, (2,))
         self.assertEqual(samples["theta"].shape[:2], (1, 4))
 
+    def test_run_mcmc_skips_log_likelihood_when_not_requested(self) -> None:
+        config = self._make_config()
+        config.inference.save_log_likelihood = False
+        observations = self._make_observations()
+        fake_idata = MagicMock()
+        fake_idata.posterior = {
+            "theta": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 2))))),
+            "b": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 2))))),
+            "a": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 2))))),
+            "tau_theta": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 2))))),
+            "theta_source": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 2, 2))))),
+        }
+        fake_idata.sample_stats = {
+            "diverging": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.zeros((1, 4)))))
+        }
+        fake_idata.posterior_predictive = {
+            "correct": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 4)))))
+        }
+        fake_ppc_idata = MagicMock()
+
+        with (
+            patch("src.models.irt_pymc._build_model") as build_model,
+            patch("src.models.irt_pymc.pm.sample", return_value=fake_idata),
+            patch("src.models.irt_pymc.pm.compute_log_likelihood") as compute_log_likelihood,
+            patch("src.models.irt_pymc.pm.sample_posterior_predictive", return_value=fake_ppc_idata),
+            patch(
+                "src.models.irt_pymc.aggregate_judge_accuracy_ppc",
+                return_value={
+                    "judge_accuracy_ppc_mean": np.ones(2),
+                    "judge_accuracy_ppc_p05": np.ones(2),
+                    "judge_accuracy_ppc_p95": np.ones(2),
+                },
+            ),
+        ):
+            build_model.return_value.__enter__.return_value = MagicMock()
+            build_model.return_value.__exit__.return_value = None
+
+            run_mcmc(config, observations)
+
+        compute_log_likelihood.assert_not_called()
+
+    def test_run_mcmc_computes_log_likelihood_when_requested(self) -> None:
+        config = self._make_config()
+        config.inference.save_log_likelihood = True
+        observations = self._make_observations()
+        fake_idata = MagicMock()
+        fake_idata.posterior = {
+            "theta": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 2))))),
+            "b": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 2))))),
+            "a": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 2))))),
+            "tau_theta": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 2))))),
+            "theta_source": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 2, 2))))),
+        }
+        fake_idata.sample_stats = {
+            "diverging": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.zeros((1, 4)))))
+        }
+        fake_idata.posterior_predictive = {
+            "correct": MagicMock(transpose=MagicMock(return_value=MagicMock(values=np.ones((1, 4, 4)))))
+        }
+        fake_ppc_idata = MagicMock()
+
+        with (
+            patch("src.models.irt_pymc._build_model") as build_model,
+            patch("src.models.irt_pymc.pm.sample", return_value=fake_idata),
+            patch("src.models.irt_pymc.pm.compute_log_likelihood") as compute_log_likelihood,
+            patch("src.models.irt_pymc.pm.sample_posterior_predictive", return_value=fake_ppc_idata),
+            patch(
+                "src.models.irt_pymc.aggregate_judge_accuracy_ppc",
+                return_value={
+                    "judge_accuracy_ppc_mean": np.ones(2),
+                    "judge_accuracy_ppc_p05": np.ones(2),
+                    "judge_accuracy_ppc_p95": np.ones(2),
+                },
+            ),
+        ):
+            build_model.return_value.__enter__.return_value = MagicMock()
+            build_model.return_value.__exit__.return_value = None
+
+            run_mcmc(config, observations)
+
+        compute_log_likelihood.assert_called_once_with(
+            fake_idata,
+            var_names=["correct"],
+            extend_inferencedata=True,
+            progressbar=False,
+        )
+
     def test_run_and_save_posterior_rejects_incomplete_judge_coverage(self) -> None:
         config = self._make_config()
         config.judges = [
@@ -79,6 +166,7 @@ class PyMCModelTests(unittest.TestCase):
         ]
         matrix = pl.DataFrame(
             {
+                "item_key": ["gpt:item-1", "gpt:item-2"],
                 "item_id": ["item-1", "item-2"],
                 "label": ["A>B", "B>A"],
                 "original_id": [1, 2],

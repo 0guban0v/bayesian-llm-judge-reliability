@@ -53,8 +53,8 @@ inference:
   sampler: NUTS
   num_warmup: 500
   num_samples: 1000
-  num_chains: 2
-  target_accept_prob: 0.85
+  num_chains: 4
+  target_accept_prob: 0.90
   output_dir: data/processed/posteriors
   file_name: irt_2pl_posterior.npz
 
@@ -82,7 +82,3 @@ model:
 analysis:
   plots:
     max_sources: 8
-  report:
-    standout_judge_id: deepseek-r1-distill-qwen-14b
-    standout_case_limit: 3
-    response_synopsis_chars: 120
