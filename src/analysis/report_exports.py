@@ -38,6 +38,15 @@ class ModelComparisonUnavailableError(RuntimeError):
     """Expected absence/mismatch of study inputs for cross-run model comparison."""
 
 
+RUN_CONFIGS = {
+    "Pooled baseline": Path("configs/experiment.yaml"),
+    "GPT global": Path("configs/experiment_gpt_global.yaml"),
+    "GPT source-hier": Path("configs/experiment_gpt_source_hier.yaml"),
+    "Claude global": Path("configs/experiment_claude_global.yaml"),
+    "Claude source-hier": Path("configs/experiment_claude_source_hier.yaml"),
+}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True, help="Path to the experiment YAML.")
@@ -146,6 +155,8 @@ def write_results_exports(
             [
                 r"\begin{table}[htbp]",
                 r"\small",
+                r"\centering",
+                r"\resizebox{\columnwidth}{!}{%",
                 r"\begin{tabular}{lccc}",
                 r"\toprule",
                 f"judge & accuracy & posterior $\\theta$ mean & 90\\% CI {ROW_END}",
@@ -153,6 +164,7 @@ def write_results_exports(
                 *judge_rows,
                 r"\bottomrule",
                 r"\end{tabular}",
+                r"}",
                 r"\caption{Observed accuracy and posterior judge reliability for current run.}",
                 r"\label{tab:judge-summary}",
                 r"\end{table}",
@@ -179,6 +191,80 @@ def write_results_exports(
                 r"\end{tabular}",
                 r"\caption{Representative pairwise posterior comparison probabilities.}",
                 r"\label{tab:pairwise}",
+                r"\end{table}",
+            ]
+        ),
+    )
+
+
+def _load_run_config(project_root_path: Path, config_path: Path) -> ExperimentConfig:
+    resolved_path = project_root_path / config_path
+    if not resolved_path.exists():
+        raise ModelComparisonUnavailableError(f"Missing required study config for report export: {resolved_path}")
+    return ExperimentConfig.from_yaml(resolved_path)
+
+
+def write_cross_run_summary_exports(
+    config: ExperimentConfig,
+    *,
+    output_dir: Path | None = None,
+) -> None:
+    """Write a compact cross-run summary table for the pooled and split-specific study fits."""
+
+    output_dir = generated_dir(config, output_dir=output_dir)
+    root = project_root(config)
+    table_rows: list[str] = []
+    for run_label, config_path in RUN_CONFIGS.items():
+        run_config = _load_run_config(root, config_path)
+        if not run_config.data.matrix_path.exists() or not run_config.inference.posterior_path.exists():
+            write_text(
+                output_dir / "cross_run_summary.tex",
+                compile_safe_note(
+                    f"Cross-run summary is unavailable because required artifacts are missing for {run_label}."
+                ),
+            )
+            return
+        matrix = pl.read_parquet(run_config.data.matrix_path)
+        posterior = load_posterior(run_config.inference.posterior_path)
+        ranking = rank_judges(posterior).with_columns(pl.col("judge_id").cast(pl.String))
+        top_judge = str(ranking.row(0, named=True)["judge_id"])
+        second_judge = str(ranking.row(1, named=True)["judge_id"])
+        split_label = " + ".join(run_config.data.splits)
+        variant_label = run_config.model.variant.replace("_", "-")
+        table_rows.append(
+            f"{tex_escape(run_label)} & "
+            f"{tex_escape(split_label)} & "
+            f"{tex_escape(variant_label)} & "
+            f"{matrix.height} & "
+            f"{tex_escape(judge_display_label(top_judge))} & "
+            f"{probability_judge_a_exceeds_b(posterior, top_judge, second_judge):.3f} {ROW_END}"
+        )
+
+    write_text(
+        output_dir / "cross_run_summary.tex",
+        "\n".join(
+            [
+                r"\begin{table}[htbp]",
+                r"\small",
+                r"\centering",
+                r"\resizebox{\columnwidth}{!}{%",
+                r"\begin{tabular}{lccclc}",
+                r"\toprule",
+                (
+                    "run & split(s) & variant & items & top judge & "
+                    f"$P(\\mathrm{{top}} > \\mathrm{{second}} \\mid y)$ {ROW_END}"
+                ),
+                r"\midrule",
+                *table_rows,
+                r"\bottomrule",
+                r"\end{tabular}",
+                r"}",
+                (
+                    r"\caption{Cross-run summary for the pooled baseline and split-specific 2PL study fits. "
+                    r"The last column reports the posterior probability that the top-ranked judge in a run exceeds "
+                    r"the runner-up under that same fit.}"
+                ),
+                r"\label{tab:cross-run-summary}",
                 r"\end{table}",
             ]
         ),
@@ -341,6 +427,8 @@ def write_model_comparison_exports(
             [
                 r"\begin{table}[htbp]",
                 r"\small",
+                r"\centering",
+                r"\resizebox{\columnwidth}{!}{%",
                 r"\begin{tabular}{lccccc}",
                 r"\toprule",
                 (
@@ -351,6 +439,7 @@ def write_model_comparison_exports(
                 *comparison_rows,
                 r"\bottomrule",
                 r"\end{tabular}",
+                r"}",
                 (
                     r"\caption{Matched split-wise model comparison between global and source-hierarchical 2PL fits. "
                     r"Positive $\Delta$ values favor source-hier over global.}"
@@ -380,6 +469,7 @@ def main() -> None:
         write_text(output_dir / "pairwise_summary.tex", compile_safe_note("Judge matrix missing for this run."))
 
     write_diagnostics_exports(config, posterior)
+    write_cross_run_summary_exports(config)
     write_model_comparison_exports(config)
 
 

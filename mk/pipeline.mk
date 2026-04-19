@@ -59,6 +59,7 @@ clean-generated:
 	rm -rf mlruns
 	rm -f mlflow.db mlflow.db-shm mlflow.db-wal
 	rm -rf .tracked_runs
+	rm -rf profiles
 	rm -rf logs/*.log
 
 full:

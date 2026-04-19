@@ -126,13 +126,16 @@ def plot_judge_accuracy_ppc(
     color_map = judge_color_map(judge_ids)
     ordering = np.argsort(flatten_draws(posterior["theta"]).mean(axis=0))[::-1]
     ordered_judge_ids = [str(judge_ids[index]) for index in ordering]
-    fig_height = max(2.8, 0.8 * len(ordered_judge_ids) + 1.1)
-    fig, axis = plt.subplots(figsize=(6.4, fig_height))
+    fig_height = max(2.05, 0.48 * len(ordered_judge_ids) + 0.72)
+    fig, axis = plt.subplots(figsize=(6.0, fig_height))
     accuracy_values = np.concatenate([observed, predicted_mean, predictive_lower, predictive_upper])
     accuracy_min = float(np.min(accuracy_values))
     accuracy_max = float(np.max(accuracy_values))
-    accuracy_pad = max(0.01, 0.08 * (accuracy_max - accuracy_min))
+    accuracy_pad = max(0.006, 0.035 * (accuracy_max - accuracy_min))
     axis.set_xlim(max(0.0, accuracy_min - accuracy_pad), min(1.0, accuracy_max + accuracy_pad))
+    x_min, x_max = axis.get_xlim()
+    x_span = max(x_max - x_min, 1e-6)
+    label_x = x_min + 0.012 * x_span
 
     for row_index, judge_id in enumerate(ordered_judge_ids):
         judge_index = int(np.where(judge_ids == judge_id)[0][0])
@@ -149,37 +152,39 @@ def plot_judge_accuracy_ppc(
             float(predicted_mean[judge_index]),
             baseline,
             marker="o",
-            s=34,
-            color=color_map[judge_id],
+            s=24,
+            facecolors=COLOR_SURFACE,
+            edgecolors=color_map[judge_id],
+            linewidths=1.1,
             zorder=3,
         )
         axis.scatter(
             float(observed[judge_index]),
             baseline,
             marker="s",
-            s=34,
+            s=20,
             color=color_map[judge_id],
             zorder=4,
         )
+        axis.text(
+            label_x,
+            baseline + 0.18,
+            judge_display_label(judge_id),
+            ha="left",
+            va="bottom",
+            fontsize=FONT_SIZE_TICK - 0.4,
+            color=color_map[judge_id],
+            fontweight="semibold",
+        )
 
     axis.set_yticks(np.arange(len(ordered_judge_ids)))
-    axis.set_yticklabels(
-        [judge_display_label(judge_id) for judge_id in reversed(ordered_judge_ids)],
-        fontsize=FONT_SIZE_TICK,
-    )
+    axis.set_yticklabels([])
+    axis.tick_params(axis="y", left=False, labelleft=False)
+    axis.spines["left"].set_visible(False)
     axis.set_xlabel("Accuracy")
-    axis.text(
-        0.98,
-        0.98,
-        "square = observed\ncircle = predicted\nline = 90% interval",
-        transform=axis.transAxes,
-        ha="right",
-        va="top",
-        fontsize=FONT_SIZE_ANNOTATION,
-        bbox={"facecolor": COLOR_SURFACE, "edgecolor": "none", "alpha": 0.9, "pad": 2.5},
-    )
+    axis.set_ylim(-0.45, len(ordered_judge_ids) - 0.55)
     style_axis(axis)
-    fig.tight_layout()
+    fig.subplots_adjust(left=0.08, right=0.98, bottom=0.28, top=0.93)
     return fig
 
 
