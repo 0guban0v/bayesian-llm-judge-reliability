@@ -108,12 +108,16 @@ def run_mcmc(
             return_inferencedata=True,
             progressbar=logger.isEnabledFor(logging.INFO),
         )
-        posterior_predictive = pm.sample_posterior_predictive(
+        ppc_idata = pm.sample_posterior_predictive(
             idata,
             var_names=["correct"],
-            return_inferencedata=False,
+            return_inferencedata=True,
             progressbar=False,
         )
+        idata.extend(ppc_idata)
     samples = _extract_samples(idata, config)
-    ppc_summary = aggregate_judge_accuracy_ppc(np.asarray(posterior_predictive["correct"]), observations)
+    posterior_predictive_correct = np.asarray(
+        idata.posterior_predictive["correct"].transpose("chain", "draw", "obs").values
+    )
+    ppc_summary = aggregate_judge_accuracy_ppc(posterior_predictive_correct, observations)
     return idata, samples, ppc_summary

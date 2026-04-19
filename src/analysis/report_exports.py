@@ -14,9 +14,6 @@ from src.analysis.plot_config import judge_display_label, source_display_label
 from src.analysis.posterior_archive import load_posterior
 from src.analysis.posterior_queries import probability_judge_a_exceeds_b, rank_judges
 from src.analysis.posterior_utils import (
-    has_source_reliability,
-    source_reliability_summary,
-    top_source_ids,
     validate_posterior_plot_inputs,
 )
 from src.data.loader import load_judge_logs
@@ -257,10 +254,7 @@ def write_diagnostics_exports(
     divergences = int(np.asarray(posterior.get("diverging", np.array([]))).sum())
     summary = summarize_diagnostic_rows(rows, divergences)
     table_lines = [
-        (
-            f"{tex_escape(row['parameter'])} & {float(row['rhat_max']):.3f} & "
-            f"{float(row['ess_min']):.1f} & {int(row['divergences'])} {ROW_END}"
-        )
+        (f"{tex_escape(row['parameter'])} & {float(row['rhat_max']):.3f} & {float(row['ess_min']):.1f} {ROW_END}")
         for row in summary.to_dicts()
     ]
     write_text(
@@ -269,62 +263,15 @@ def write_diagnostics_exports(
             [
                 r"\begin{table}[htbp]",
                 r"\small",
-                r"\begin{tabular}{lccc}",
+                r"\begin{tabular}{lcc}",
                 r"\toprule",
-                f"parameter & max $\\hat{{R}}$ & min ESS & divergences {ROW_END}",
+                f"parameter & max $\\hat{{R}}$ & min ESS {ROW_END}",
                 r"\midrule",
                 *table_lines,
                 r"\bottomrule",
                 r"\end{tabular}",
                 r"\caption{Compact posterior diagnostics exported from current run.}",
                 r"\label{tab:diagnostics}",
-                r"\end{table}",
-            ]
-        ),
-    )
-
-
-def write_source_exports(
-    config: ExperimentConfig,
-    matrix: pl.DataFrame,
-    posterior: dict[str, np.ndarray] | None,
-) -> None:
-    output_dir = generated_dir(config)
-    if posterior is None or not has_source_reliability(posterior):
-        write_text(
-            output_dir / "source_summary.tex",
-            compile_safe_note("Source-aware posterior summary not available for this run."),
-        )
-        return
-
-    ordered_sources = top_source_ids(matrix, posterior, max_sources=config.analysis.plots.max_sources)
-    summary = source_reliability_summary(posterior, ordered_sources)
-    lines = []
-    for source_id in ordered_sources:
-        source_rows = summary.filter(pl.col("source") == source_id)
-        best_row = max(source_rows.to_dicts(), key=lambda row: float(row["theta_mean"]))
-        source_label = tex_escape(source_display_label(source_id))
-        best_judge_label = tex_escape(judge_display_label(str(best_row["judge_id"])))
-        interval = f"[{float(best_row['theta_p05']):.3f}, {float(best_row['theta_p95']):.3f}]"
-        lines.append(
-            f"{source_label} & {best_judge_label} & {float(best_row['theta_mean']):.3f} & {interval} {ROW_END}"
-        )
-    write_text(
-        output_dir / "source_summary.tex",
-        "\n".join(
-            [
-                r"\begin{table}[H]",
-                r"\small",
-                r"\centering",
-                r"\begin{tabular}{lccc}",
-                r"\toprule",
-                f"source & best judge & mean $\\theta_{{j,s}}$ & 90\\% interval {ROW_END}",
-                r"\midrule",
-                *lines,
-                r"\bottomrule",
-                r"\end{tabular}",
-                r"\caption{Top plotted sources and strongest judge by posterior mean source-specific reliability.}",
-                r"\label{tab:source-summary}",
                 r"\end{table}",
             ]
         ),
@@ -435,12 +382,10 @@ def main() -> None:
 
     if matrix is not None:
         write_results_exports(config, matrix, posterior)
-        write_source_exports(config, matrix, posterior)
     else:
         output_dir = generated_dir(config)
         write_text(output_dir / "judge_summary.tex", compile_safe_note("Judge matrix missing for this run."))
         write_text(output_dir / "pairwise_summary.tex", compile_safe_note("Judge matrix missing for this run."))
-        write_text(output_dir / "source_summary.tex", compile_safe_note("Judge matrix missing for this run."))
 
     write_diagnostics_exports(config, posterior)
     write_case_exports(config, items)

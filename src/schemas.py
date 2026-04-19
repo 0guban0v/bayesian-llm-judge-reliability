@@ -98,6 +98,12 @@ class InferenceConfig(BaseModel):
 
         return self.output_dir / self.file_name
 
+    @property
+    def inferencedata_path(self) -> Path:
+        """Return the ArviZ InferenceData NetCDF path saved alongside the posterior archive."""
+
+        return self.output_dir / Path(self.file_name).with_suffix(".nc").name
+
 
 class AnalysisPlotsConfig(BaseModel):
     """Configurable plotting defaults for analysis outputs."""
