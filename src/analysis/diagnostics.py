@@ -157,12 +157,19 @@ def _trim_tick_zeros(value: float, _position: float) -> str:
     return f"{value:g}"
 
 
-def _diagnostic_ticks(limit: float, include: float | None = None) -> list[float]:
+def _diagnostic_ticks(
+    limit: float,
+    include: float | None = None,
+    *,
+    include_zero: bool = True,
+) -> list[float]:
     """Build sparse axis ticks while ensuring an optional threshold is shown."""
 
     if limit <= 0:
         return [0.0]
-    ticks: set[float] = {0.0, float(limit)}
+    ticks: set[float] = {float(limit)}
+    if include_zero:
+        ticks.add(0.0)
     if include is not None and 0.0 <= include <= limit:
         ticks.add(float(include))
     if limit >= 1000:
@@ -227,7 +234,7 @@ def plot_diagnostics_summary_rows(
     ess_max = max(float(np.nanmax(group["ess"])) for group in groups)
     ess_limit = ess_max * 1.06
     ess_axis.set_xlim(0.0, ess_limit)
-    ess_axis.set_xticks(_diagnostic_ticks(ess_limit, include=400.0))
+    ess_axis.set_xticks(_diagnostic_ticks(ess_limit, include=400.0, include_zero=False))
     formatter = FuncFormatter(_trim_tick_zeros)
     rhat_axis.xaxis.set_major_formatter(formatter)
     ess_axis.xaxis.set_major_formatter(formatter)

@@ -7,10 +7,16 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 
-class ExperimentMetadata(BaseModel):
+class StrictConfigModel(BaseModel):
+    """Base model that rejects unknown fields in configuration payloads."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ExperimentMetadata(StrictConfigModel):
     """Top-level experiment metadata."""
 
     name: str
@@ -18,7 +24,7 @@ class ExperimentMetadata(BaseModel):
     date: date
 
 
-class DataConfig(BaseModel):
+class DataConfig(StrictConfigModel):
     """Dataset and artifact paths for JudgeBench processing."""
 
     source: Literal["judgebench"]
@@ -45,7 +51,7 @@ class DataConfig(BaseModel):
         return self.output_dir / self.matrix_file
 
 
-class JudgeConfig(BaseModel):
+class JudgeConfig(StrictConfigModel):
     """Configuration for a single local MLX judge."""
 
     id: str
@@ -56,7 +62,7 @@ class JudgeConfig(BaseModel):
     reverse_order: bool = False
 
 
-class PriorConfig(BaseModel):
+class PriorConfig(StrictConfigModel):
     """Location and scale parameters for a model prior."""
 
     dist: Literal["normal", "lognormal"]
@@ -64,7 +70,7 @@ class PriorConfig(BaseModel):
     scale: float = Field(gt=0.0)
 
 
-class PriorsConfig(BaseModel):
+class PriorsConfig(StrictConfigModel):
     """Grouped priors for the IRT model."""
 
     theta: PriorConfig
@@ -73,7 +79,7 @@ class PriorsConfig(BaseModel):
     tau_theta: PriorConfig | None = None
 
 
-class IRTConfig(BaseModel):
+class IRTConfig(StrictConfigModel):
     """Bayesian IRT model specification."""
 
     type: Literal["1PL", "2PL"]
@@ -81,7 +87,7 @@ class IRTConfig(BaseModel):
     priors: PriorsConfig
 
 
-class InferenceConfig(BaseModel):
+class InferenceConfig(StrictConfigModel):
     """Inference hyperparameters for NUTS sampling."""
 
     sampler: Literal["NUTS"]
@@ -89,6 +95,7 @@ class InferenceConfig(BaseModel):
     num_samples: int = Field(gt=0)
     num_chains: int = Field(gt=0)
     target_accept_prob: float = Field(gt=0.0, lt=1.0)
+    save_log_likelihood: bool = False
     output_dir: Path = Path("data/processed/posteriors")
     file_name: str = "irt_posterior.npz"
 
@@ -105,28 +112,28 @@ class InferenceConfig(BaseModel):
         return self.output_dir / Path(self.file_name).with_suffix(".nc").name
 
 
-class AnalysisPlotsConfig(BaseModel):
+class AnalysisPlotsConfig(StrictConfigModel):
     """Configurable plotting defaults for analysis outputs."""
 
     max_sources: int = Field(gt=0, default=8)
 
 
-class AnalysisReportConfig(BaseModel):
-    """Configurable reporting defaults for generated exports."""
-
-    standout_judge_id: str = "deepseek-r1-distill-qwen-14b"
-    standout_case_limit: int = Field(gt=0, default=3)
-    response_synopsis_chars: int = Field(gt=0, default=120)
-
-
-class AnalysisConfig(BaseModel):
+class AnalysisConfig(StrictConfigModel):
     """Analysis and report policy defaults."""
 
     plots: AnalysisPlotsConfig = Field(default_factory=AnalysisPlotsConfig)
-    report: AnalysisReportConfig = Field(default_factory=AnalysisReportConfig)
 
 
-class ExperimentConfig(BaseModel):
+class TrackingConfig(StrictConfigModel):
+    """Experiment tracking configuration."""
+
+    backend: Literal["mlflow"] = "mlflow"
+    experiment_name: str = "bayesian-llm-judge-reliability"
+    tracking_db: Path = Path("mlflow.db")
+    artifact_dir: Path = Path("mlruns")
+
+
+class ExperimentConfig(StrictConfigModel):
     """Single source of truth for the experiment pipeline."""
 
     experiment: ExperimentMetadata
@@ -135,6 +142,7 @@ class ExperimentConfig(BaseModel):
     inference: InferenceConfig
     model: IRTConfig
     analysis: AnalysisConfig = Field(default_factory=AnalysisConfig)
+    tracking: TrackingConfig = Field(default_factory=TrackingConfig)
     _project_root: Path = PrivateAttr(default=Path.cwd())
 
     @model_validator(mode="after")
@@ -162,6 +170,8 @@ class ExperimentConfig(BaseModel):
         config.data.raw_dir = _resolve_project_path(project_root, config.data.raw_dir)
         config.data.logs_dir = _resolve_project_path(project_root, config.data.logs_dir)
         config.inference.output_dir = _resolve_project_path(project_root, config.inference.output_dir)
+        config.tracking.tracking_db = _resolve_project_path(project_root, config.tracking.tracking_db)
+        config.tracking.artifact_dir = _resolve_project_path(project_root, config.tracking.artifact_dir)
         return config
 
     @property
@@ -176,6 +186,36 @@ class ExperimentConfig(BaseModel):
 
         return self._project_root / "report"
 
+    @property
+    def tracking_uri(self) -> str:
+        """Return the MLflow tracking URI for this experiment."""
+
+        return f"sqlite:///{self.tracking.tracking_db.resolve()}"
+
+    @property
+    def tracking_artifact_uri(self) -> str:
+        """Return the MLflow artifact root URI for this experiment."""
+
+        return self.tracking.artifact_dir.resolve().as_uri()
+
+    @property
+    def tracked_output_dir(self) -> Path:
+        """Return the config-scoped local staging directory for tracked run artifacts."""
+
+        return self._project_root / ".tracked_runs" / self.experiment.name
+
+    @property
+    def tracked_figures_dir(self) -> Path:
+        """Return the config-scoped figure staging directory for tracked runs."""
+
+        return self.tracked_output_dir / "figures"
+
+    @property
+    def tracked_report_generated_dir(self) -> Path:
+        """Return the config-scoped generated-report staging directory for tracked runs."""
+
+        return self.tracked_output_dir / "report_generated"
+
     def ensure_directories(self) -> None:
         """Create the directories used by the pipeline."""
 
@@ -186,21 +226,31 @@ class ExperimentConfig(BaseModel):
             self.inference.output_dir,
             self.figures_dir,
             self.report_dir,
+            self.tracking.tracking_db.parent,
+            self.tracking.artifact_dir,
+            self.tracked_figures_dir,
+            self.tracked_report_generated_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
 
-class JudgeResult(BaseModel):
+class JudgeResult(StrictConfigModel):
     """Structured JSONL record for a single judge decision."""
 
     item_id: str
+    item_key: str
     judge_id: str
     timestamp: datetime
     source: str
     question: str
     ground_truth_label: Literal["A>B", "B>A"]
     prompt_variant: str
+    prompt_protocol_version: str
     prompt_order: Literal["original", "reversed"]
+    model: str
+    max_tokens: int = Field(gt=0)
+    trust_remote_code: bool = False
+    reverse_order: bool = False
     raw_response: str
     parsed_verdict: Literal["A", "B"] | None
     correct: bool | None

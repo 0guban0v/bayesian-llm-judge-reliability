@@ -20,6 +20,7 @@ class MatrixSemanticsTests(unittest.TestCase):
     def test_first_original_judgments_keep_first_duplicate_in_log_order(self) -> None:
         logs = pl.DataFrame(
             {
+                "item_key": ["gpt:item-1", "gpt:item-1", "gpt:item-1"],
                 "item_id": ["item-1", "item-1", "item-1"],
                 "judge_id": ["judge-a", "judge-a", "judge-b"],
                 "prompt_order": ["original", "original", "reversed"],
@@ -29,26 +30,27 @@ class MatrixSemanticsTests(unittest.TestCase):
 
         first = first_original_judgments(logs)
 
-        self.assertEqual(first.sort(["item_id", "judge_id"])["correct_int"].to_list(), [1])
+        self.assertEqual(first.sort(["item_key", "judge_id"])["correct_int"].to_list(), [1])
 
     def test_pivot_original_judgments_returns_wide_matrix(self) -> None:
         first = pl.DataFrame(
             {
-                "item_id": ["item-1", "item-1", "item-2"],
+                "item_key": ["gpt:item-1", "gpt:item-1", "claude:item-2"],
                 "judge_id": ["judge-a", "judge-b", "judge-a"],
                 "correct_int": [1, 0, 1],
             }
         )
 
-        pivoted = pivot_original_judgments(first).sort("item_id")
+        pivoted = pivot_original_judgments(first).sort("item_key")
 
-        self.assertEqual(pivoted.columns, ["item_id", "judge-a", "judge-b"])
+        self.assertEqual(pivoted.columns, ["item_key", "judge-a", "judge-b"])
         self.assertEqual(pivoted["judge-a"].to_list(), [1, 1])
-        self.assertEqual(pivoted["judge-b"].to_list(), [0, None])
+        self.assertEqual(pivoted["judge-b"].to_list(), [None, 0])
 
     def test_judge_columns_and_summary_skip_metadata(self) -> None:
         matrix = pl.DataFrame(
             {
+                "item_key": ["gpt:item-1", "claude:item-2"],
                 "item_id": ["item-1", "item-2"],
                 "original_id": [1, 2],
                 "split": ["gpt", "claude"],
@@ -69,6 +71,7 @@ class MatrixSemanticsTests(unittest.TestCase):
     def test_observed_accuracy_frame_preserves_requested_order(self) -> None:
         matrix = pl.DataFrame(
             {
+                "item_key": ["gpt:item-1", "claude:item-2"],
                 "item_id": ["item-1", "item-2"],
                 "original_id": [1, 2],
                 "split": ["gpt", "claude"],

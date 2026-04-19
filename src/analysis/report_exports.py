@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
 
+import arviz as az
 import numpy as np
 import polars as pl
 
 from src.analysis.diagnostics import diagnostic_parameter_rows, summarize_diagnostic_rows
-from src.analysis.plot_config import judge_display_label, source_display_label
+from src.analysis.plot_config import judge_display_label
 from src.analysis.posterior_archive import load_posterior
 from src.analysis.posterior_queries import probability_judge_a_exceeds_b, rank_judges
 from src.analysis.posterior_utils import (
     validate_posterior_plot_inputs,
 )
-from src.data.loader import load_judge_logs
-from src.data.matrix_semantics import first_original_judgments, observed_accuracy_frame, pivot_original_judgments
+from src.data.matrix_semantics import observed_accuracy_frame
 from src.schemas import ExperimentConfig
 
 ROW_END = r"\\"
@@ -35,14 +34,27 @@ LATEX_ESCAPE_MAP = {
 }
 
 
+class ModelComparisonUnavailableError(RuntimeError):
+    """Expected absence/mismatch of study inputs for cross-run model comparison."""
+
+
+RUN_CONFIGS = {
+    "Pooled baseline": Path("configs/experiment.yaml"),
+    "GPT global": Path("configs/experiment_gpt_global.yaml"),
+    "GPT source-hier": Path("configs/experiment_gpt_source_hier.yaml"),
+    "Claude global": Path("configs/experiment_claude_global.yaml"),
+    "Claude source-hier": Path("configs/experiment_claude_source_hier.yaml"),
+}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True, help="Path to the experiment YAML.")
     return parser.parse_args()
 
 
-def generated_dir(config: ExperimentConfig) -> Path:
-    path = config.report_dir / "generated"
+def generated_dir(config: ExperimentConfig, output_dir: Path | None = None) -> Path:
+    path = output_dir if output_dir is not None else config.report_dir / "generated"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -58,6 +70,12 @@ def write_text(path: Path, content: str) -> None:
 
 def compile_safe_note(message: str) -> str:
     return f"\\emph{{{tex_escape(message)}}}"
+
+
+def project_root(config: ExperimentConfig) -> Path:
+    """Return the repository root inferred from report/config paths."""
+
+    return config.report_dir.parent
 
 
 def observed_accuracy(matrix: pl.DataFrame, judge_ids: list[str]) -> dict[str, float]:
@@ -100,77 +118,14 @@ def representative_pairwise_rows(
     ]
 
 
-def selected_focus_judge(judge_ids: list[str], preferred_judge_id: str | None) -> str:
-    if preferred_judge_id and preferred_judge_id in judge_ids:
-        return preferred_judge_id
-    return judge_ids[0]
-
-
-def standout_cases(
-    items: pl.DataFrame,
-    logs: pl.DataFrame,
-    judge_ids: list[str],
-    *,
-    preferred_judge_id: str | None,
-    limit: int,
-) -> tuple[str, pl.DataFrame]:
-    focus_judge = selected_focus_judge(judge_ids, preferred_judge_id)
-    if logs.height == 0:
-        return focus_judge, pl.DataFrame([])
-
-    original_logs = logs.filter(pl.col("prompt_order").eq("original") & pl.col("correct").is_not_null())
-    if original_logs.height == 0:
-        return focus_judge, pl.DataFrame([])
-
-    first_correctness = first_original_judgments(logs)
-    if first_correctness.height == 0:
-        return focus_judge, pl.DataFrame([])
-    pivoted = pivot_original_judgments(first_correctness)
-    other_judges = [judge_id for judge_id in judge_ids if judge_id != focus_judge and judge_id in pivoted.columns]
-    filtered = pivoted.filter(
-        pl.col(focus_judge).fill_null(0).eq(1)
-        & pl.all_horizontal([pl.col(judge_id).fill_null(0).eq(0) for judge_id in other_judges])
-    )
-    if filtered.height == 0:
-        return focus_judge, pl.DataFrame([])
-
-    focus_logs = (
-        original_logs.filter(pl.col("judge_id").eq(focus_judge))
-        .group_by("item_id", maintain_order=True)
-        .agg(
-            [
-                pl.col("raw_response").first().alias("raw_response"),
-                pl.col("latency_ms").first().alias("latency_ms"),
-            ]
-        )
-    )
-    available_judge_ids = [j for j in judge_ids if j in filtered.columns]
-    selected = (
-        items.join(filtered.select(["item_id", *available_judge_ids]), on="item_id", how="inner")
-        .join(focus_logs, on="item_id", how="left")
-        .sort("item_id")
-        .select(
-            [
-                "item_id",
-                "source",
-                "label",
-                "response_a",
-                "response_b",
-                "raw_response",
-                *available_judge_ids,
-            ]
-        )
-        .head(limit)
-    )
-    return focus_judge, selected
-
-
 def write_results_exports(
     config: ExperimentConfig,
     matrix: pl.DataFrame,
     posterior: dict[str, np.ndarray] | None,
+    *,
+    output_dir: Path | None = None,
 ) -> None:
-    output_dir = generated_dir(config)
+    output_dir = generated_dir(config, output_dir=output_dir)
     judge_ids = [judge.id for judge in config.judges]
     accuracy_by_judge = observed_accuracy(matrix, judge_ids)
     if posterior is None:
@@ -200,6 +155,8 @@ def write_results_exports(
             [
                 r"\begin{table}[htbp]",
                 r"\small",
+                r"\centering",
+                r"\resizebox{\columnwidth}{!}{%",
                 r"\begin{tabular}{lccc}",
                 r"\toprule",
                 f"judge & accuracy & posterior $\\theta$ mean & 90\\% CI {ROW_END}",
@@ -207,6 +164,7 @@ def write_results_exports(
                 *judge_rows,
                 r"\bottomrule",
                 r"\end{tabular}",
+                r"}",
                 r"\caption{Observed accuracy and posterior judge reliability for current run.}",
                 r"\label{tab:judge-summary}",
                 r"\end{table}",
@@ -239,11 +197,87 @@ def write_results_exports(
     )
 
 
+def _load_run_config(project_root_path: Path, config_path: Path) -> ExperimentConfig:
+    resolved_path = project_root_path / config_path
+    if not resolved_path.exists():
+        raise ModelComparisonUnavailableError(f"Missing required study config for report export: {resolved_path}")
+    return ExperimentConfig.from_yaml(resolved_path)
+
+
+def write_cross_run_summary_exports(
+    config: ExperimentConfig,
+    *,
+    output_dir: Path | None = None,
+) -> None:
+    """Write a compact cross-run summary table for the pooled and split-specific study fits."""
+
+    output_dir = generated_dir(config, output_dir=output_dir)
+    root = project_root(config)
+    table_rows: list[str] = []
+    for run_label, config_path in RUN_CONFIGS.items():
+        run_config = _load_run_config(root, config_path)
+        if not run_config.data.matrix_path.exists() or not run_config.inference.posterior_path.exists():
+            write_text(
+                output_dir / "cross_run_summary.tex",
+                compile_safe_note(
+                    f"Cross-run summary is unavailable because required artifacts are missing for {run_label}."
+                ),
+            )
+            return
+        matrix = pl.read_parquet(run_config.data.matrix_path)
+        posterior = load_posterior(run_config.inference.posterior_path)
+        ranking = rank_judges(posterior).with_columns(pl.col("judge_id").cast(pl.String))
+        top_judge = str(ranking.row(0, named=True)["judge_id"])
+        second_judge = str(ranking.row(1, named=True)["judge_id"])
+        split_label = " + ".join(run_config.data.splits)
+        variant_label = run_config.model.variant.replace("_", "-")
+        table_rows.append(
+            f"{tex_escape(run_label)} & "
+            f"{tex_escape(split_label)} & "
+            f"{tex_escape(variant_label)} & "
+            f"{matrix.height} & "
+            f"{tex_escape(judge_display_label(top_judge))} & "
+            f"{probability_judge_a_exceeds_b(posterior, top_judge, second_judge):.3f} {ROW_END}"
+        )
+
+    write_text(
+        output_dir / "cross_run_summary.tex",
+        "\n".join(
+            [
+                r"\begin{table}[htbp]",
+                r"\small",
+                r"\centering",
+                r"\resizebox{\columnwidth}{!}{%",
+                r"\begin{tabular}{lccclc}",
+                r"\toprule",
+                (
+                    "run & split(s) & variant & items & top judge & "
+                    f"$P(\\mathrm{{top}} > \\mathrm{{second}} \\mid y)$ {ROW_END}"
+                ),
+                r"\midrule",
+                *table_rows,
+                r"\bottomrule",
+                r"\end{tabular}",
+                r"}",
+                (
+                    r"\caption{Cross-run summary for the pooled baseline and split-specific 2PL study fits. "
+                    r"The last column reports the posterior probability that the top-ranked judge in a run exceeds "
+                    r"the runner-up under that same fit.}"
+                ),
+                r"\label{tab:cross-run-summary}",
+                r"\end{table}",
+            ]
+        ),
+    )
+
+
 def write_diagnostics_exports(
     config: ExperimentConfig,
     posterior: dict[str, np.ndarray] | None,
+    *,
+    output_dir: Path | None = None,
 ) -> None:
-    output_dir = generated_dir(config)
+    output_dir = generated_dir(config, output_dir=output_dir)
     if posterior is None:
         write_text(
             output_dir / "diagnostics_summary.tex",
@@ -278,91 +312,139 @@ def write_diagnostics_exports(
     )
 
 
-def _response_synopsis(text: str, max_chars: int) -> str:
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
-    snippet = sentences[-1] if sentences else text.strip()
-    return snippet[:max_chars] + ("\u2026" if len(snippet) > max_chars else "")
+def _study_inferencedata_paths(config: ExperimentConfig) -> dict[str, dict[str, Path]]:
+    """Return split-by-variant InferenceData paths from the explicit study config set."""
+
+    config_dir = project_root(config) / "configs"
+    expected_configs = {
+        "gpt": {
+            "global": config_dir / "experiment_gpt_global.yaml",
+            "source_hier": config_dir / "experiment_gpt_source_hier.yaml",
+        },
+        "claude": {
+            "global": config_dir / "experiment_claude_global.yaml",
+            "source_hier": config_dir / "experiment_claude_source_hier.yaml",
+        },
+    }
+    split_paths: dict[str, dict[str, Path]] = {}
+    for split_name, variant_configs in expected_configs.items():
+        split_paths[split_name] = {}
+        for variant_name, config_path in variant_configs.items():
+            if not config_path.exists():
+                raise ModelComparisonUnavailableError(
+                    f"Missing required study config for model comparison: {config_path}"
+                )
+            study_config = ExperimentConfig.from_yaml(config_path)
+            if study_config.model.type != "2PL":
+                raise ModelComparisonUnavailableError(f"Study config must use 2PL for model comparison: {config_path}")
+            if study_config.model.variant != variant_name:
+                raise ModelComparisonUnavailableError(
+                    f"Study config variant mismatch for {config_path}: expected {variant_name}, "
+                    f"found {study_config.model.variant}"
+                )
+            if study_config.data.splits != [split_name]:
+                raise ModelComparisonUnavailableError(
+                    f"Study config split mismatch for {config_path}: expected [{split_name}], "
+                    f"found {study_config.data.splits}"
+                )
+            split_paths[split_name][variant_name] = study_config.inference.inferencedata_path
+    return split_paths
 
 
-def write_case_exports(config: ExperimentConfig, items: pl.DataFrame | None) -> None:
-    output_dir = generated_dir(config)
-    if items is None:
-        write_text(output_dir / "standout_cases.tex", compile_safe_note("Item subset is missing for this run."))
+def write_model_comparison_exports(
+    config: ExperimentConfig,
+    *,
+    output_dir: Path | None = None,
+) -> None:
+    """Write a compact PSIS-LOO/WAIC comparison table for matched split-wise study runs."""
+
+    output_dir = generated_dir(config, output_dir=output_dir)
+    comparison_rows: list[str] = []
+    missing_paths: list[Path] = []
+    try:
+        study_paths = _study_inferencedata_paths(config)
+    except ModelComparisonUnavailableError as exc:
+        write_text(output_dir / "model_comparison.tex", compile_safe_note(str(exc)))
         return
-
-    judge_ids = [judge.id for judge in config.judges]
-    focus_judge = selected_focus_judge(judge_ids, config.analysis.report.standout_judge_id)
-    logs = load_judge_logs(config.data.logs_dir)
-    focus_judge, cases = standout_cases(
-        items,
-        logs,
-        judge_ids,
-        preferred_judge_id=config.analysis.report.standout_judge_id,
-        limit=config.analysis.report.standout_case_limit,
-    )
-    focus_label = judge_display_label(focus_judge)
-    if cases.height == 0:
-        write_text(
-            output_dir / "standout_cases.tex",
-            compile_safe_note(f"No original-order cases matched the selection rule for {focus_label}."),
-        )
-        return
-
-    table_rows = []
-    for row in cases.to_dicts():
-        verdict_line = str(row.get("raw_response") or "").splitlines()[0].strip()
-        table_rows.append(
-            " & ".join(
-                [
-                    tex_escape(source_display_label(str(row.get("source") or "unknown"))),
-                    tex_escape(row.get("label") or "n/a"),
-                    tex_escape(
-                        _response_synopsis(
-                            str(row.get("response_a") or ""),
-                            config.analysis.report.response_synopsis_chars,
-                        )
-                    ),
-                    tex_escape(
-                        _response_synopsis(
-                            str(row.get("response_b") or ""),
-                            config.analysis.report.response_synopsis_chars,
-                        )
-                    ),
-                    tex_escape(verdict_line or "n/a"),
-                ]
+    for split_name, paths in study_paths.items():
+        required_variants = {"global", "source_hier"}
+        if set(paths) != required_variants:
+            write_text(
+                output_dir / "model_comparison.tex",
+                compile_safe_note(
+                    f"PSIS-LOO/WAIC comparison is unavailable because split {split_name} does not provide both "
+                    "global and source_hier study outputs."
+                ),
             )
-            + f" {ROW_END}"
+            return
+        if not all(path.exists() for path in paths.values()):
+            missing_paths.extend(path for path in paths.values() if not path.exists())
+            continue
+        global_idata = az.from_netcdf(paths["global"])
+        source_hier_idata = az.from_netcdf(paths["source_hier"])
+        if not hasattr(global_idata, "log_likelihood") or not hasattr(source_hier_idata, "log_likelihood"):
+            write_text(
+                output_dir / "model_comparison.tex",
+                compile_safe_note(
+                    "PSIS-LOO/WAIC comparison is unavailable for current study archives. "
+                    "Re-run inference after enabling saved pointwise log likelihood."
+                ),
+            )
+            return
+        loo_global = az.loo(global_idata)
+        loo_source = az.loo(source_hier_idata)
+        waic_global = az.waic(global_idata)
+        waic_source = az.waic(source_hier_idata)
+        compare = az.compare({"global": global_idata, "source_hier": source_hier_idata}, ic="loo", method="stacking")
+        preferred = str(compare.index[0]).replace("_", "-")
+        weight_source_hier = float(compare.loc["source_hier", "weight"])
+        max_pareto_k = max(
+            float(np.asarray(loo_global.pareto_k).max()),
+            float(np.asarray(loo_source.pareto_k).max()),
         )
+        comparison_rows.append(
+            f"{tex_escape(split_name)} & "
+            f"{float(loo_source.elpd_loo - loo_global.elpd_loo):.2f} & "
+            f"{float(waic_source.elpd_waic - waic_global.elpd_waic):.2f} & "
+            f"{tex_escape(preferred)} & "
+            f"{weight_source_hier:.3f} & "
+            f"{max_pareto_k:.3f} {ROW_END}"
+        )
+
+    if missing_paths:
+        write_text(
+            output_dir / "model_comparison.tex",
+            compile_safe_note(
+                "PSIS-LOO/WAIC comparison is unavailable because one or more split-study InferenceData files are "
+                "missing."
+            ),
+        )
+        return
 
     write_text(
-        output_dir / "standout_cases.tex",
+        output_dir / "model_comparison.tex",
         "\n".join(
             [
-                r"\begin{table}[H]",
-                r"\captionsetup{justification=raggedright,singlelinecheck=false}",
-                r"\footnotesize",
-                r"\setlength{\tabcolsep}{3pt}",
-                (
-                    r"\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.12\textwidth}"
-                    r">{\raggedright\arraybackslash}p{0.06\textwidth}"
-                    r">{\raggedright\arraybackslash}p{0.33\textwidth}"
-                    r">{\raggedright\arraybackslash}p{0.33\textwidth}"
-                    r">{\raggedright\arraybackslash}p{0.11\textwidth}@{}}"
-                ),
+                r"\begin{table}[htbp]",
+                r"\small",
+                r"\centering",
+                r"\resizebox{\columnwidth}{!}{%",
+                r"\begin{tabular}{lccccc}",
                 r"\toprule",
                 (
-                    f"source & label & resp A (conclusion) & resp B (conclusion) & "
-                    f"{tex_escape(focus_label)} verdict {ROW_END}"
+                    "split & $\\Delta$ elpd$_{loo}$ & $\\Delta$ elpd$_{waic}$ & "
+                    f"LOO winner & stacking wt. source-hier & max Pareto $k$ {ROW_END}"
                 ),
                 r"\midrule",
-                *table_rows,
+                *comparison_rows,
                 r"\bottomrule",
                 r"\end{tabular}",
+                r"}",
                 (
-                    f"\\caption{{Readable standout cases where only {tex_escape(focus_label)} "
-                    "is correct and every other configured judge is incorrect under original prompt order.}"
+                    r"\caption{Matched split-wise model comparison between global and source-hierarchical 2PL fits. "
+                    r"Positive $\Delta$ values favor source-hier over global.}"
                 ),
-                r"\label{tab:standout-cases}",
+                r"\label{tab:model-comparison}",
                 r"\end{table}",
             ]
         ),
@@ -373,7 +455,6 @@ def main() -> None:
     args = parse_args()
     config = ExperimentConfig.from_yaml(args.config)
     config.ensure_directories()
-    items = pl.read_parquet(config.data.item_path) if config.data.item_path.exists() else None
     matrix = pl.read_parquet(config.data.matrix_path) if config.data.matrix_path.exists() else None
     posterior = load_posterior(config.inference.posterior_path) if config.inference.posterior_path.exists() else None
 
@@ -388,7 +469,8 @@ def main() -> None:
         write_text(output_dir / "pairwise_summary.tex", compile_safe_note("Judge matrix missing for this run."))
 
     write_diagnostics_exports(config, posterior)
-    write_case_exports(config, items)
+    write_cross_run_summary_exports(config)
+    write_model_comparison_exports(config)
 
 
 if __name__ == "__main__":
