@@ -1,71 +1,53 @@
-# Bayesian LLM Judge Reliability
+# Rankings Are Not Stable Across Item Populations
 
-Measure how reliable local LLM judges are on JudgeBench with Bayesian Item Response Theory. This repo runs local MLX judges, builds an item-by-judge correctness matrix, and fits Bayesian 1PL/2PL IRT models in PyMC.
+Bayesian IRT analysis of LLM judge reliability on JudgeBench. Five local judges are evaluated under one shared binary-verdict interface. The main finding: judge rankings depend on which items you evaluate on.
 
-![Judge Reliability Posterior](figures/judge_reliability_ridge.png)
+- On GPT-derived items, DeepSeek 14B is a stable top judge (*P*(top > second) ≥ 0.87)
+- On Claude-derived items, top ordering flips and posterior separation drops to *P* ≤ 0.57
+- Absolute accuracy peaks at 0.574 — no judge is strong enough for standalone arbitration. More expensive models might have higher accuracy.
 
-## What It Does
+<p align="center">
+  <img src="figures/judge_reliability_ridge.png" height="506" alt="Posterior judge reliability"/>
+  &nbsp;&nbsp;
+  <img src="figures/judge_reliability_by_source.png" height="506" alt="Source-aware reliability heatmap"/>
+</p>
 
-- runs local judge models with a fixed constrained `FINAL VERDICT: A|B` protocol
-- rebuilds a binary judge-by-item matrix from append-only JSONL logs
-- fits Bayesian IRT to separate judge reliability from item difficulty
-- produces posterior diagnostics, global judge figures, and source-aware comparison figures
-- logs tracked study runs to local MLflow with configs, metrics, posterior artifacts, and figures
+*Left: posterior densities of global judge reliability θ. DeepSeek 14B separates upward; middle ranks overlap. Right: source-conditioned posterior means show judge strengths vary across item families.*
 
-## Current Setup
+## Approach
 
-- dataset: JudgeBench via Hugging Face
-- judges: local MLX-compatible models
-- protocol: one fixed verdict-only pointwise comparison prompt
-- inference: PyMC NUTS with reproducible config-driven settings
-- outputs: parquet items/matrix, posterior `.npz`, diagnostics, and figures
+1. Load JudgeBench items (question + two candidate responses + gold label)
+2. Each judge picks A or B via constrained decoding — verdict scored against gold label → binary 0/1
+3. Fit hierarchical Bayesian 2PL IRT (PyMC NUTS) separating judge reliability from item difficulty
+4. Compare posterior rankings across GPT/Claude splits and global/source-hierarchical model variants
+
+## Methods & Stack
+
+**Bayesian modeling:** 2PL IRT with source-conditioned judge effects, PyMC NUTS (4 chains, 1000 draws), PSIS-LOO/WAIC model comparison
+
+**Inference pipeline:** MLX local judge inference on Apple Silicon, constrained binary-verdict decoding, append-only JSONL logs, reproducible config-driven runs
+
+**Experiment tracking:** MLflow with SQLite metadata, posterior artifacts, diagnostics, and figures per tracked run
 
 ## Quick Start
 
 ```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
-make pre-commit-install
 make setup-models
-make full
-```
-
-## Tracked Study Runs
-
-Use the tracked workflow when you want experiment-result material in MLflow rather than repo-local comparison summaries.
-
-Run one tracked config:
-
-```bash
-make tracked-analysis CONFIG=configs/experiment_gpt_global.yaml
-```
-
-`tracked-analysis` is end-to-end: it samples or reloads items, resumes judge collection into JSONL logs,
-rebuilds the matrix from current logs, runs inference, and uploads artifacts to MLflow.
-
-Run the baseline plus the four split-by-variant study configs sequentially:
-
-```bash
 make tracked-study-all
 ```
 
-`tracked-study-all` finishes with a pooled `report-exports` pass that generates the cross-run
-`model_comparison.tex` table. That table is a bounded research output: matched split-wise
-PSIS-LOO/WAIC comparison for `global` versus `source_hier` within the `2PL` family only.
-
-Tracked runs log parameters, diagnostics, posterior summaries, figures, and generated report snippets to local
-MLflow with SQLite metadata in `mlflow.db` and file artifacts in `mlruns/`.
+Requires Apple Silicon Mac with ≥ 64 GB unified memory. `google/gemma-2-9b-it` is gated on Hugging Face (`HF_TOKEN` in `.env`).
 
 ## Docs
 
-- [Workflow](docs/workflow.md): setup, model verification, and pipeline commands
-- [Profiling](docs/profiling.md): full-run metrics and stage profiling
-- [Structure](docs/structure.md): repo layout and artifact flow
-- [Assumptions](docs/assumptions.md): what the current experiment treats as true
-- [Limitations](docs/limitations.md): what the current results do not justify
+- [Workflow](docs/workflow.md) — setup, model verification, pipeline commands
+- [Structure](docs/structure.md) — repo layout and artifact flow
+- [Assumptions](docs/assumptions.md) — what the experiment treats as true
+- [Limitations](docs/limitations.md) — interpretation boundaries
 
 ## License
 
-This repository is public for viewing only. All rights are reserved.
-
-No use, copying, modification, distribution, or derivative works are permitted
-without prior written permission from the author.
+This repository is public for viewing only. All rights reserved.
+No use, copying, modification, distribution, or derivative works permitted without prior written permission.
