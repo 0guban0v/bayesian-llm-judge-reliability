@@ -21,6 +21,9 @@ from src.schemas import ExperimentConfig
 
 logger = logging.getLogger(__name__)
 
+PARQUET_COMPRESSION = "zstd"
+PARQUET_COMPRESSION_LEVEL = 19
+
 ITEM_COLUMNS = [
     "item_key",
     "item_id",
@@ -146,7 +149,11 @@ def write_frame(frame: pl.DataFrame, path: Path) -> None:
     """Persist a Polars DataFrame to parquet."""
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    frame.write_parquet(path)
+    frame.write_parquet(
+        path,
+        compression=PARQUET_COMPRESSION,
+        compression_level=PARQUET_COMPRESSION_LEVEL,
+    )
 
 
 def validate_cached_items(items: pl.DataFrame, item_path: Path) -> None:
