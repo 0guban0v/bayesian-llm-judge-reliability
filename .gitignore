@@ -6,9 +6,6 @@ __pycache__/
 .tmp/
 profiles/
 
-/AGENTS.md
-/CLAUDE.md
-
 .env
 .env.*
 !.env.example
@@ -22,6 +19,7 @@ mlflow.db-*
 .tracked_runs/
 
 logs/*.log
+./log
 archive/logs/*.log
 
 data/raw/*
