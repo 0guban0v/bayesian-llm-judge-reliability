@@ -34,6 +34,7 @@ data/processed/*.parquet
 data/processed/posteriors/*
 !data/processed/posteriors/.gitkeep
 
+data/processed/**/*.nc
 *.npz
 *.png
 *.pdf
