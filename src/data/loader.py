@@ -220,6 +220,7 @@ def load_judge_logs(logs_dir: Path) -> pl.DataFrame:
         return pl.DataFrame(
             schema={
                 "item_key": pl.String,
+                "item_content_hash": pl.String,
                 "item_id": pl.String,
                 "judge_id": pl.String,
                 "prompt_order": pl.String,
@@ -232,7 +233,41 @@ def load_judge_logs(logs_dir: Path) -> pl.DataFrame:
             f"Judge logs in {logs_dir} are unsupported because they predate split-qualified item keys. "
             "Delete them and re-run judges with the current pipeline."
         )
+    if "item_content_hash" not in logs.columns:
+        raise ValueError(
+            f"Judge logs in {logs_dir} are unsupported because they predate item content hashes. "
+            "Delete them and re-run judges with the current item content."
+        )
     return logs
+
+
+def select_current_item_logs(items: pl.DataFrame, logs: pl.DataFrame) -> pl.DataFrame:
+    """Keep log rows whose content hash matches current item content."""
+
+    required_column = "item_content_hash"
+    if required_column not in items.columns:
+        raise ValueError(f"JudgeBench items are missing content-hash columns: {required_column}")
+    if required_column not in logs.columns:
+        raise ValueError("Judge logs are missing content-hash column: item_content_hash")
+
+    current_items = items.select(["item_key", "item_content_hash"])
+    logs_for_current_keys = logs.join(current_items.select("item_key"), on="item_key", how="semi")
+    stale_logs = logs_for_current_keys.join(
+        current_items,
+        on=["item_key", "item_content_hash"],
+        how="anti",
+    )
+    if stale_logs.height > 0:
+        logger.warning(
+            "stale judgments excluded because item content changed rows=%s item_keys=%s",
+            stale_logs.height,
+            stale_logs.get_column("item_key").unique(maintain_order=True).to_list(),
+        )
+    return logs.join(
+        current_items,
+        on=["item_key", "item_content_hash"],
+        how="semi",
+    )
 
 
 def build_binary_matrix(
@@ -242,7 +277,8 @@ def build_binary_matrix(
 ) -> pl.DataFrame:
     """Build an item-by-judge correctness matrix from original-order logs."""
 
-    first_judgments = first_original_judgments(logs, duplicate_logger=logger)
+    current_logs = select_current_item_logs(items, logs)
+    first_judgments = first_original_judgments(current_logs, duplicate_logger=logger)
     if first_judgments.height == 0:
         matrix = items.select(sorted(ITEM_METADATA_COLUMNS))
     else:

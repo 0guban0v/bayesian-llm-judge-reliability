@@ -17,6 +17,7 @@ from src.judges.runner import (
     judge_metadata_fields,
     load_processed_keys,
     run_all,
+    run_judge,
     validate_log_metadata,
 )
 from src.schemas import ExperimentConfig
@@ -286,6 +287,49 @@ class LogMetadataTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, r"Judge log .* is malformed at line 1"):
                 load_processed_keys(log_path)
+
+    def test_load_processed_keys_qualifies_item_by_content_hash(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        record = self.build_log_record(judge.id, **judge_metadata_fields(judge))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            self.assertEqual(
+                load_processed_keys(log_path),
+                {("gpt:item-1", "0" * 64, "original")},
+            )
+
+    def test_run_judge_reprocesses_item_when_content_hash_changes(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        old_item = build_item()
+        changed_item = build_item(question="changed question")
+        old_record = self.build_log_record(
+            judge.id,
+            item_content_hash=old_item["item_content_hash"],
+            **judge_metadata_fields(judge),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            config = config.model_copy(update={"data": config.data.model_copy(update={"logs_dir": logs_dir})})
+            log_path = logs_dir / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(old_record) + "\n", encoding="utf-8")
+
+            with (
+                patch("src.judges.runner.generate_text", return_value="FINAL VERDICT: A"),
+                patch("src.judges.runner.time.perf_counter", side_effect=[0.0, 0.01]),
+            ):
+                completed = run_judge(config, judge, [changed_item])
+
+            records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(completed, 1)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[-1]["item_content_hash"], changed_item["item_content_hash"])
 
 
 if __name__ == "__main__":

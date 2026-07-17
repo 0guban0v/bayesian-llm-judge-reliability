@@ -110,20 +110,12 @@ class BuildBinaryMatrixTests(unittest.TestCase):
     """Verify matrix construction edge cases."""
 
     def test_warns_when_duplicate_judgments_exist(self) -> None:
-        items = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1"],
-                "item_id": ["item-1"],
-                "original_id": [1],
-                "split": ["gpt"],
-                "source": ["source"],
-                "question": ["question"],
-                "label": ["A>B"],
-            }
-        )
+        item = build_item(source="source", question="question")
+        items = pl.DataFrame([item])
         logs = pl.DataFrame(
             {
                 "item_key": ["gpt:item-1", "gpt:item-1"],
+                "item_content_hash": [item["item_content_hash"], item["item_content_hash"]],
                 "item_id": ["item-1", "item-1"],
                 "judge_id": ["judge-a", "judge-a"],
                 "prompt_order": ["original", "original"],
@@ -138,20 +130,22 @@ class BuildBinaryMatrixTests(unittest.TestCase):
         self.assertEqual(matrix["judge-a"].to_list(), [1])
 
     def test_distinguishes_same_item_id_across_splits_via_item_key(self) -> None:
-        items = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1", "claude:item-1"],
-                "item_id": ["item-1", "item-1"],
-                "original_id": [1, 1],
-                "split": ["gpt", "claude"],
-                "source": ["source-a", "source-b"],
-                "question": ["question-a", "question-b"],
-                "label": ["A>B", "B>A"],
-            }
+        gpt_item = build_item()
+        claude_item = build_item(
+            item_key="claude:item-1",
+            split="claude",
+            source="source-b",
+            question="question-b",
+            label="B>A",
         )
+        items = pl.DataFrame([gpt_item, claude_item])
         logs = pl.DataFrame(
             {
                 "item_key": ["gpt:item-1", "claude:item-1"],
+                "item_content_hash": [
+                    gpt_item["item_content_hash"],
+                    claude_item["item_content_hash"],
+                ],
                 "item_id": ["item-1", "item-1"],
                 "judge_id": ["judge-a", "judge-a"],
                 "prompt_order": ["original", "original"],
@@ -163,6 +157,49 @@ class BuildBinaryMatrixTests(unittest.TestCase):
 
         self.assertEqual(matrix.get_column("item_key").to_list(), ["claude:item-1", "gpt:item-1"])
         self.assertEqual(matrix.get_column("judge-a").to_list(), [0, 1])
+
+    def test_uses_current_content_result_when_stale_result_appears_first(self) -> None:
+        old_item = build_item()
+        current_item = build_item(question="changed question")
+        items = pl.DataFrame([current_item])
+        logs = pl.DataFrame(
+            {
+                "item_key": [old_item["item_key"], current_item["item_key"]],
+                "item_content_hash": [
+                    old_item["item_content_hash"],
+                    current_item["item_content_hash"],
+                ],
+                "item_id": ["item-1", "item-1"],
+                "judge_id": ["judge-a", "judge-a"],
+                "prompt_order": ["original", "original"],
+                "correct": [True, False],
+            }
+        )
+
+        with self.assertLogs("src.data.loader", level="WARNING") as captured:
+            matrix = build_binary_matrix(items, logs, ["judge-a"])
+
+        self.assertIn("stale judgments excluded because item content changed", captured.output[0])
+        self.assertEqual(matrix["judge-a"].to_list(), [0])
+
+    def test_excludes_stale_result_when_current_content_has_not_been_judged(self) -> None:
+        old_item = build_item()
+        current_item = build_item(label="B>A")
+        logs = pl.DataFrame(
+            {
+                "item_key": [old_item["item_key"]],
+                "item_content_hash": [old_item["item_content_hash"]],
+                "item_id": ["item-1"],
+                "judge_id": ["judge-a"],
+                "prompt_order": ["original"],
+                "correct": [True],
+            }
+        )
+
+        with self.assertLogs("src.data.loader", level="WARNING"):
+            matrix = build_binary_matrix(pl.DataFrame([current_item]), logs, ["judge-a"])
+
+        self.assertEqual(matrix["judge-a"].to_list(), [None])
 
 
 class CategoryMatcherTests(unittest.TestCase):

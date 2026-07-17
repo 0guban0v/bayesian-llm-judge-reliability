@@ -99,12 +99,12 @@ def validate_log_metadata(log_path: Path, judge: JudgeConfig) -> None:
                 )
 
 
-def load_processed_keys(log_path: Path) -> set[tuple[str, str]]:
-    """Return previously logged `(item_key, prompt_order)` pairs for resumable runs."""
+def load_processed_keys(log_path: Path) -> set[tuple[str, str, str]]:
+    """Return content-qualified keys for previously completed judge tasks."""
 
     if not log_path.exists():
         return set()
-    processed: set[tuple[str, str]] = set()
+    processed: set[tuple[str, str, str]] = set()
     with log_path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             if not line.strip():
@@ -121,7 +121,13 @@ def load_processed_keys(log_path: Path) -> set[tuple[str, str]]:
                 raise ValueError(
                     f"Judge log {log_path} is malformed at line {line_number}: {exc.errors()[0]['msg']}."
                 ) from exc
-            processed.add((parsed_record.item_key, parsed_record.prompt_order))
+            processed.add(
+                (
+                    parsed_record.item_key,
+                    parsed_record.item_content_hash,
+                    parsed_record.prompt_order,
+                )
+            )
     return processed
 
 
@@ -216,7 +222,7 @@ def run_judge(
     tasks: list[tuple[dict[str, Any], str]] = []
     for item in items:
         for prompt_order in prompt_orders:
-            key = (item["item_key"], prompt_order)
+            key = (item["item_key"], item["item_content_hash"], prompt_order)
             if key not in processed:
                 tasks.append((item, prompt_order))
     logger.info(
