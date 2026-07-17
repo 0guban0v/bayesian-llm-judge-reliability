@@ -64,6 +64,15 @@ class ItemContentHashTests(unittest.TestCase):
                 mutated[field] = f"{mutated[field]}-changed"
                 self.assertNotEqual(item_content_hash(mutated), baseline_hash)
 
+    def test_grouping_field_whitespace_changes_hash(self) -> None:
+        baseline = build_item()
+
+        for field in ("source", "split"):
+            with self.subTest(field=field):
+                mutated = dict(baseline)
+                mutated[field] = f" {mutated[field]}"
+                self.assertNotEqual(item_content_hash(mutated), item_content_hash(baseline))
+
     def test_missing_content_field_is_rejected(self) -> None:
         item = build_item()
         del item["response_b"]
