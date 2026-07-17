@@ -9,6 +9,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
+from src.data.item_identity import ITEM_CONTENT_HASH_PATTERN
+
 
 class StrictConfigModel(BaseModel):
     """Base model that rejects unknown fields in configuration payloads."""
@@ -239,6 +241,7 @@ class JudgeResult(StrictConfigModel):
 
     item_id: str
     item_key: str
+    item_content_hash: str = Field(pattern=ITEM_CONTENT_HASH_PATTERN)
     judge_id: str
     timestamp: datetime
     source: str

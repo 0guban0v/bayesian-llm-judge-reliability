@@ -7,7 +7,51 @@ import unittest
 from pathlib import Path
 
 import yaml
-from src.schemas import AnalysisConfig, ExperimentConfig, InferenceConfig, PriorConfig
+from src.schemas import AnalysisConfig, ExperimentConfig, InferenceConfig, JudgeResult, PriorConfig
+
+
+def judge_result_payload() -> dict[str, object]:
+    """Return minimal valid persisted judge result content."""
+
+    return {
+        "item_id": "item-1",
+        "item_key": "gpt:item-1",
+        "item_content_hash": "0" * 64,
+        "judge_id": "judge-1",
+        "timestamp": "2026-04-16T00:00:00+00:00",
+        "source": "source-1",
+        "question": "question-1",
+        "ground_truth_label": "A>B",
+        "prompt_variant": "fixed_verdict_only",
+        "prompt_protocol_version": "v1",
+        "prompt_order": "original",
+        "model": "model-1",
+        "max_tokens": 8,
+        "trust_remote_code": False,
+        "reverse_order": False,
+        "raw_response": "FINAL VERDICT: A",
+        "parsed_verdict": "A",
+        "correct": True,
+        "latency_ms": 10,
+    }
+
+
+class JudgeResultSchemaTests(unittest.TestCase):
+    """Verify judge logs require canonical item content hashes."""
+
+    def test_requires_item_content_hash(self) -> None:
+        payload = judge_result_payload()
+        del payload["item_content_hash"]
+
+        with self.assertRaisesRegex(ValueError, "(?s)item_content_hash.*Field required"):
+            JudgeResult.model_validate(payload)
+
+    def test_rejects_malformed_item_content_hash(self) -> None:
+        payload = judge_result_payload()
+        payload["item_content_hash"] = "not-a-sha256"
+
+        with self.assertRaisesRegex(ValueError, "(?s)item_content_hash.*String should match pattern"):
+            JudgeResult.model_validate(payload)
 
 
 class InferenceConfigTests(unittest.TestCase):

@@ -175,6 +175,7 @@ def judge_item(
     return JudgeResult(
         item_id=item["item_id"],
         item_key=item["item_key"],
+        item_content_hash=item["item_content_hash"],
         judge_id=judge.id,
         timestamp=datetime.now(UTC),
         source=item["source"],

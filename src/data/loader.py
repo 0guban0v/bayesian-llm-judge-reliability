@@ -11,6 +11,7 @@ from pathlib import Path
 import polars as pl
 from datasets import load_dataset
 
+from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash, validate_item_content_hash
 from src.data.matrix_semantics import (
     ITEM_METADATA_COLUMNS,
     first_original_judgments,
@@ -26,6 +27,7 @@ PARQUET_COMPRESSION_LEVEL = 19
 
 ITEM_COLUMNS = [
     "item_key",
+    "item_content_hash",
     "item_id",
     "original_id",
     "split",
@@ -119,6 +121,11 @@ def _dataset_to_frame(dataset_name: str, split_name: str) -> pl.DataFrame:
                 pl.format("{}:{}", pl.lit(split_name), pl.col("item_id").cast(pl.String)).alias("item_key"),
             ]
         )
+        .with_columns(
+            pl.struct(ITEM_CONTENT_FIELDS)
+            .map_elements(item_content_hash, return_dtype=pl.String)
+            .alias("item_content_hash")
+        )
         .select(ITEM_COLUMNS)
     )
 
@@ -156,14 +163,31 @@ def write_frame(frame: pl.DataFrame, path: Path) -> None:
     )
 
 
+def validate_item_content_hashes(items: pl.DataFrame) -> None:
+    """Require every prepared item to match its stored content hash."""
+
+    required_columns = ["item_key", "item_content_hash", *ITEM_CONTENT_FIELDS]
+    missing_columns = [column for column in required_columns if column not in items.columns]
+    if missing_columns:
+        raise ValueError(f"JudgeBench items are missing content-hash columns: {', '.join(missing_columns)}")
+    for item in items.select(required_columns).iter_rows(named=True):
+        validate_item_content_hash(item)
+
+
 def validate_cached_items(items: pl.DataFrame, item_path: Path) -> None:
-    """Require cached item parquets to contain the current split-qualified key schema."""
+    """Require cached item parquets to contain the current content-addressed schema."""
 
     if "item_key" not in items.columns:
         raise ValueError(
             f"Cached JudgeBench items at {item_path} are unsupported because they predate split-qualified item keys. "
             "Re-run with --refresh-items to rebuild the cached item subset."
         )
+    if "item_content_hash" not in items.columns:
+        raise ValueError(
+            f"Cached JudgeBench items at {item_path} are unsupported because they predate item content hashes. "
+            "Re-run with --refresh-items to rebuild the cached item subset."
+        )
+    validate_item_content_hashes(items)
 
 
 def load_or_prepare_items(config: ExperimentConfig, refresh: bool = False) -> pl.DataFrame:

@@ -5,11 +5,96 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import polars as pl
-from src.data.loader import _matches_categories, build_binary_matrix, load_or_prepare_items
+from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash
+from src.data.loader import _dataset_to_frame, _matches_categories, build_binary_matrix, load_or_prepare_items
 from src.data.validate import assert_complete_judge_coverage, validate_items
 from src.schemas import ExperimentConfig
+
+
+def build_item(
+    *,
+    item_key: str = "gpt:item-1",
+    item_id: str = "item-1",
+    original_id: int = 1,
+    split: str = "gpt",
+    source: str = "source-a",
+    question: str = "question-a",
+    response_a: str = "answer-a",
+    response_b: str = "answer-b",
+    label: str = "A>B",
+) -> dict[str, object]:
+    """Return one valid item carrying its canonical content hash."""
+
+    item: dict[str, object] = {
+        "item_key": item_key,
+        "item_id": item_id,
+        "original_id": original_id,
+        "split": split,
+        "source": source,
+        "question": question,
+        "response_model": "model-a",
+        "response_a": response_a,
+        "response_b": response_b,
+        "label": label,
+    }
+    item["item_content_hash"] = item_content_hash(item)
+    return item
+
+
+class ItemContentHashTests(unittest.TestCase):
+    """Verify stable hashing over judge-relevant item content."""
+
+    def test_normalized_equivalent_content_has_same_hash(self) -> None:
+        composed = build_item(question="  café\r\nline  ")
+        decomposed = build_item(question="cafe\u0301\nline")
+
+        self.assertEqual(item_content_hash(composed), item_content_hash(decomposed))
+
+    def test_each_content_field_changes_hash(self) -> None:
+        baseline = build_item()
+        baseline_hash = item_content_hash(baseline)
+
+        for field in ITEM_CONTENT_FIELDS:
+            with self.subTest(field=field):
+                mutated = dict(baseline)
+                mutated[field] = f"{mutated[field]}-changed"
+                self.assertNotEqual(item_content_hash(mutated), baseline_hash)
+
+    def test_missing_content_field_is_rejected(self) -> None:
+        item = build_item()
+        del item["response_b"]
+
+        with self.assertRaisesRegex(ValueError, "requires fields: response_b"):
+            item_content_hash(item)
+
+
+class DatasetToFrameTests(unittest.TestCase):
+    """Verify normalized JudgeBench rows receive content identities."""
+
+    def test_adds_item_content_hash(self) -> None:
+        table = pl.DataFrame(
+            {
+                "pair_id": ["item-1"],
+                "original_id": [1],
+                "source": ["source-a"],
+                "question": ["question-a"],
+                "response_model": ["model-a"],
+                "response_A": ["answer-a"],
+                "response_B": ["answer-b"],
+                "label": ["A>B"],
+            }
+        ).to_arrow()
+        dataset = SimpleNamespace(data=SimpleNamespace(table=table))
+
+        with patch("src.data.loader.load_dataset", return_value=dataset):
+            items = _dataset_to_frame("dataset", "gpt")
+
+        item = items.row(0, named=True)
+        self.assertEqual(item["item_content_hash"], item_content_hash(item))
 
 
 class BuildBinaryMatrixTests(unittest.TestCase):
@@ -98,31 +183,23 @@ class ValidateItemsTests(unittest.TestCase):
 
     def test_accepts_valid_items(self) -> None:
         items = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1", "claude:item-1"],
-                "item_id": ["item-1", "item-1"],
-                "original_id": [1, 2],
-                "split": ["gpt", "claude"],
-                "source": ["source-a", "source-b"],
-                "question": ["question-a", "question-b"],
-                "label": ["A>B", "B>A"],
-            }
+            [
+                build_item(),
+                build_item(
+                    item_key="claude:item-1",
+                    original_id=2,
+                    split="claude",
+                    source="source-b",
+                    question="question-b",
+                    label="B>A",
+                ),
+            ]
         )
 
         validate_items(items)
 
     def test_rejects_duplicate_split_qualified_item_keys(self) -> None:
-        items = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1", "gpt:item-1"],
-                "item_id": ["item-1", "item-1"],
-                "original_id": [1, 2],
-                "split": ["gpt", "claude"],
-                "source": ["source-a", "source-b"],
-                "question": ["question-a", "question-b"],
-                "label": ["A>B", "B>A"],
-            }
-        )
+        items = pl.DataFrame([build_item(), build_item(original_id=2)])
 
         with self.assertRaisesRegex(
             ValueError,
@@ -131,23 +208,27 @@ class ValidateItemsTests(unittest.TestCase):
             validate_items(items)
 
     def test_rejects_invalid_labels(self) -> None:
-        items = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1", "claude:item-2"],
-                "item_id": ["item-1", "item-2"],
-                "original_id": [1, 2],
-                "split": ["gpt", "claude"],
-                "source": ["source-a", "source-b"],
-                "question": ["question-a", "question-b"],
-                "label": ["A>B", "TIE"],
-            }
-        )
+        items = pl.DataFrame([build_item(label="TIE")])
 
         with self.assertRaisesRegex(
             ValueError,
             "Sampled JudgeBench items contain unsupported labels.",
         ):
             validate_items(items)
+
+    def test_rejects_missing_item_content_hash(self) -> None:
+        item = build_item()
+        del item["item_content_hash"]
+
+        with self.assertRaisesRegex(ValueError, "missing content-hash columns: item_content_hash"):
+            validate_items(pl.DataFrame([item]))
+
+    def test_rejects_mismatched_item_content_hash(self) -> None:
+        item = build_item()
+        item["question"] = "changed after hashing"
+
+        with self.assertRaisesRegex(ValueError, "Item content hash mismatch for item_key=gpt:item-1"):
+            validate_items(pl.DataFrame([item]))
 
 
 class ValidateCoverageTests(unittest.TestCase):
@@ -224,6 +305,23 @@ class LoadOrPrepareItemsTests(unittest.TestCase):
                 ValueError,
                 "predate split-qualified item keys.*--refresh-items",
             ):
+                load_or_prepare_items(config)
+
+    def test_rejects_cached_items_without_item_content_hash(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml")).model_copy(deep=True)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config.data.output_dir = root / "processed"
+            config.data.raw_dir = root / "raw"
+            config.data.logs_dir = root / "logs"
+            config.inference.output_dir = root / "posteriors"
+            legacy_item = build_item()
+            del legacy_item["item_content_hash"]
+            config.ensure_directories()
+            pl.DataFrame([legacy_item]).write_parquet(config.data.item_path)
+
+            with self.assertRaisesRegex(ValueError, "predate item content hashes.*--refresh-items"):
                 load_or_prepare_items(config)
 
 
