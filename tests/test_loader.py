@@ -251,6 +251,38 @@ class BuildBinaryMatrixTests(unittest.TestCase):
 
         self.assertEqual(matrix["judge-a"].to_list(), [None])
 
+    def test_stale_warning_limits_item_key_sample(self) -> None:
+        old_items = [
+            build_item(item_key=f"gpt:item-{index}", item_id=f"item-{index}", original_id=index) for index in range(7)
+        ]
+        current_items = [
+            build_item(
+                item_key=f"gpt:item-{index}",
+                item_id=f"item-{index}",
+                original_id=index,
+                question="changed question",
+            )
+            for index in range(7)
+        ]
+        logs = pl.DataFrame(
+            {
+                "item_key": [item["item_key"] for item in old_items],
+                "item_content_hash": [item["item_content_hash"] for item in old_items],
+                "item_id": [item["item_id"] for item in old_items],
+                "judge_id": ["judge-a"] * 7,
+                "prompt_order": ["original"] * 7,
+                "correct": [True] * 7,
+            }
+        )
+
+        with self.assertLogs("src.data.loader", level="WARNING") as captured:
+            build_binary_matrix(pl.DataFrame(current_items), logs, ["judge-a"])
+
+        warning = captured.output[0]
+        self.assertIn("rows=7 item_key_count=7", warning)
+        self.assertIn("gpt:item-4", warning)
+        self.assertNotIn("gpt:item-5", warning)
+
 
 class LoadJudgeLogsTests(unittest.TestCase):
     """Verify every persisted log row satisfies current result schema."""

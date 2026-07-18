@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 PARQUET_COMPRESSION = "zstd"
 PARQUET_COMPRESSION_LEVEL = 19
+STALE_ITEM_KEY_SAMPLE_SIZE = 5
 
 ITEM_COLUMNS = [
     "item_key",
@@ -275,10 +276,12 @@ def select_current_item_logs(items: pl.DataFrame, logs: pl.DataFrame) -> pl.Data
         how="anti",
     )
     if stale_logs.height > 0:
+        stale_item_keys = stale_logs.get_column("item_key").unique(maintain_order=True)
         logger.warning(
-            "stale judgments excluded because item content changed rows=%s item_keys=%s",
+            "stale judgments excluded because item content changed rows=%s item_key_count=%s item_key_sample=%s",
             stale_logs.height,
-            stale_logs.get_column("item_key").unique(maintain_order=True).to_list(),
+            len(stale_item_keys),
+            stale_item_keys.head(STALE_ITEM_KEY_SAMPLE_SIZE).to_list(),
         )
     return logs.join(
         current_items,
