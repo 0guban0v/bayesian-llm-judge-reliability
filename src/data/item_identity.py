@@ -53,9 +53,11 @@ def item_content_hash(item: Mapping[str, object]) -> str:
 def validate_item_content_hash(item: Mapping[str, object]) -> None:
     """Require one item mapping to contain its expected content hash."""
 
-    stored_hash = item.get("item_content_hash")
+    if "item_content_hash" not in item:
+        raise ValueError("Item content field 'item_content_hash' is required")
+    stored_hash = item["item_content_hash"]
     if not isinstance(stored_hash, str):
-        raise ValueError("Item content field 'item_content_hash' must be a string")
+        raise ValueError(f"Item content field 'item_content_hash' must be a string, found {type(stored_hash).__name__}")
     expected_hash = item_content_hash(item)
     if stored_hash != expected_hash:
         item_key = item.get("item_key", "<unknown>")

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import polars as pl
-from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash
+from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash, validate_item_content_hash
 from src.data.loader import _dataset_to_frame, _matches_categories, build_binary_matrix, load_or_prepare_items
 from src.data.validate import assert_complete_judge_coverage, validate_items
 from src.schemas import ExperimentConfig
@@ -79,6 +79,20 @@ class ItemContentHashTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "requires fields: response_b"):
             item_content_hash(item)
+
+    def test_missing_stored_hash_is_rejected_as_required(self) -> None:
+        item = build_item()
+        del item["item_content_hash"]
+
+        with self.assertRaisesRegex(ValueError, "item_content_hash.*required"):
+            validate_item_content_hash(item)
+
+    def test_non_string_stored_hash_reports_type(self) -> None:
+        item = build_item()
+        item["item_content_hash"] = None
+
+        with self.assertRaisesRegex(ValueError, "item_content_hash.*must be a string, found NoneType"):
+            validate_item_content_hash(item)
 
 
 class DatasetToFrameTests(unittest.TestCase):
