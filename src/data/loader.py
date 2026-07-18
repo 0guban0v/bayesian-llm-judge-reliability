@@ -10,6 +10,7 @@ from pathlib import Path
 
 import polars as pl
 from datasets import load_dataset
+from pydantic import ValidationError
 
 from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash, validate_item_content_hash
 from src.data.matrix_semantics import (
@@ -18,7 +19,7 @@ from src.data.matrix_semantics import (
     pivot_original_judgments,
 )
 from src.logging_utils import configure_logging
-from src.schemas import ExperimentConfig
+from src.schemas import ExperimentConfig, JudgeResult
 
 logger = logging.getLogger(__name__)
 
@@ -213,9 +214,36 @@ def load_judge_logs(logs_dir: Path) -> pl.DataFrame:
     rows: list[dict[str, object]] = []
     for log_path in sorted(logs_dir.glob("*.jsonl")):
         with log_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                if line.strip():
-                    rows.append(json.loads(line))
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Judge log {log_path} is malformed at line {line_number}: invalid JSON: {exc.msg}."
+                    ) from exc
+                if not isinstance(record, dict):
+                    raise ValueError(f"Judge log {log_path} is malformed at line {line_number}: expected JSON object.")
+                if "item_key" not in record:
+                    raise ValueError(
+                        f"Judge log {log_path} is unsupported at line {line_number} because it predates "
+                        "split-qualified item keys. Delete it and re-run judges with the current pipeline."
+                    )
+                if "item_content_hash" not in record:
+                    raise ValueError(
+                        f"Judge log {log_path} is unsupported at line {line_number} because it predates item "
+                        "content hashes. Delete it and re-run judges with the current item content."
+                    )
+                try:
+                    parsed_record = JudgeResult.model_validate(record)
+                except ValidationError as exc:
+                    first_error = exc.errors()[0]
+                    field = ".".join(str(part) for part in first_error["loc"])
+                    raise ValueError(
+                        f"Judge log {log_path} is malformed at line {line_number}: {field}: {first_error['msg']}."
+                    ) from exc
+                rows.append(parsed_record.to_json_dict())
     if not rows:
         return pl.DataFrame(
             schema={
@@ -227,18 +255,7 @@ def load_judge_logs(logs_dir: Path) -> pl.DataFrame:
                 "correct": pl.Boolean,
             }
         )
-    logs = pl.DataFrame(rows)
-    if "item_key" not in logs.columns:
-        raise ValueError(
-            f"Judge logs in {logs_dir} are unsupported because they predate split-qualified item keys. "
-            "Delete them and re-run judges with the current pipeline."
-        )
-    if "item_content_hash" not in logs.columns:
-        raise ValueError(
-            f"Judge logs in {logs_dir} are unsupported because they predate item content hashes. "
-            "Delete them and re-run judges with the current item content."
-        )
-    return logs
+    return pl.DataFrame(rows)
 
 
 def select_current_item_logs(items: pl.DataFrame, logs: pl.DataFrame) -> pl.DataFrame:

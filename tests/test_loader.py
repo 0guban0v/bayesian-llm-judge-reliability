@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,8 +11,15 @@ from unittest.mock import patch
 
 import polars as pl
 from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash, validate_item_content_hash
-from src.data.loader import _dataset_to_frame, _matches_categories, build_binary_matrix, load_or_prepare_items
+from src.data.loader import (
+    _dataset_to_frame,
+    _matches_categories,
+    build_binary_matrix,
+    load_judge_logs,
+    load_or_prepare_items,
+)
 from src.data.validate import assert_complete_judge_coverage, validate_items
+from src.judges.prompts import FIXED_PROMPT_VARIANT, PROMPT_PROTOCOL_VERSION
 from src.schemas import ExperimentConfig
 
 
@@ -43,6 +51,34 @@ def build_item(
     }
     item["item_content_hash"] = item_content_hash(item)
     return item
+
+
+def build_log_record(item: dict[str, object], **overrides: object) -> dict[str, object]:
+    """Return one valid persisted judge result."""
+
+    record: dict[str, object] = {
+        "item_id": item["item_id"],
+        "item_key": item["item_key"],
+        "item_content_hash": item["item_content_hash"],
+        "judge_id": "judge-a",
+        "timestamp": "2026-04-16T00:00:00+00:00",
+        "source": item["source"],
+        "question": item["question"],
+        "ground_truth_label": item["label"],
+        "prompt_variant": FIXED_PROMPT_VARIANT,
+        "prompt_protocol_version": PROMPT_PROTOCOL_VERSION,
+        "prompt_order": "original",
+        "model": "model-a",
+        "max_tokens": 8,
+        "trust_remote_code": False,
+        "reverse_order": False,
+        "raw_response": "FINAL VERDICT: A",
+        "parsed_verdict": "A",
+        "correct": True,
+        "latency_ms": 10,
+    }
+    record.update(overrides)
+    return record
 
 
 class ItemContentHashTests(unittest.TestCase):
@@ -214,6 +250,39 @@ class BuildBinaryMatrixTests(unittest.TestCase):
             matrix = build_binary_matrix(pl.DataFrame([current_item]), logs, ["judge-a"])
 
         self.assertEqual(matrix["judge-a"].to_list(), [None])
+
+
+class LoadJudgeLogsTests(unittest.TestCase):
+    """Verify every persisted log row satisfies current result schema."""
+
+    def test_rejects_missing_hash_in_mixed_log(self) -> None:
+        item = build_item()
+        first_record = build_log_record(item)
+        second_record = build_log_record(item, prompt_order="reversed")
+        del second_record["item_content_hash"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            log_path = logs_dir / "judge-a.jsonl"
+            log_path.write_text(
+                json.dumps(first_record) + "\n" + json.dumps(second_record) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "line 2.*predates item content hashes"):
+                load_judge_logs(logs_dir)
+
+    def test_rejects_malformed_hash(self) -> None:
+        item = build_item()
+        record = build_log_record(item, item_content_hash="invalid")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            log_path = logs_dir / "judge-a.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "line 1: item_content_hash: String should match pattern"):
+                load_judge_logs(logs_dir)
 
 
 class CategoryMatcherTests(unittest.TestCase):
