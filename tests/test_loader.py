@@ -2,34 +2,170 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import polars as pl
-from src.data.loader import _matches_categories, build_binary_matrix, load_or_prepare_items
+from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash, validate_item_content_hash
+from src.data.loader import (
+    _dataset_to_frame,
+    _matches_categories,
+    build_binary_matrix,
+    load_judge_logs,
+    load_or_prepare_items,
+)
 from src.data.validate import assert_complete_judge_coverage, validate_items
+from src.judges.prompts import FIXED_PROMPT_VARIANT, PROMPT_PROTOCOL_VERSION
 from src.schemas import ExperimentConfig
+
+
+def build_item(
+    *,
+    item_key: str = "gpt:item-1",
+    item_id: str = "item-1",
+    original_id: int = 1,
+    split: str = "gpt",
+    source: str = "source-a",
+    question: str = "question-a",
+    response_a: str = "answer-a",
+    response_b: str = "answer-b",
+    label: str = "A>B",
+) -> dict[str, object]:
+    """Return one valid item carrying its canonical content hash."""
+
+    item: dict[str, object] = {
+        "item_key": item_key,
+        "item_id": item_id,
+        "original_id": original_id,
+        "split": split,
+        "source": source,
+        "question": question,
+        "response_model": "model-a",
+        "response_a": response_a,
+        "response_b": response_b,
+        "label": label,
+    }
+    item["item_content_hash"] = item_content_hash(item)
+    return item
+
+
+def build_log_record(item: dict[str, object], **overrides: object) -> dict[str, object]:
+    """Return one valid persisted judge result."""
+
+    record: dict[str, object] = {
+        "item_id": item["item_id"],
+        "item_key": item["item_key"],
+        "item_content_hash": item["item_content_hash"],
+        "judge_id": "judge-a",
+        "timestamp": "2026-04-16T00:00:00+00:00",
+        "source": item["source"],
+        "question": item["question"],
+        "ground_truth_label": item["label"],
+        "prompt_variant": FIXED_PROMPT_VARIANT,
+        "prompt_protocol_version": PROMPT_PROTOCOL_VERSION,
+        "prompt_order": "original",
+        "model": "model-a",
+        "max_tokens": 8,
+        "trust_remote_code": False,
+        "reverse_order": False,
+        "raw_response": "FINAL VERDICT: A",
+        "parsed_verdict": "A",
+        "correct": True,
+        "latency_ms": 10,
+    }
+    record.update(overrides)
+    return record
+
+
+class ItemContentHashTests(unittest.TestCase):
+    """Verify stable hashing over judge-relevant item content."""
+
+    def test_normalized_equivalent_content_has_same_hash(self) -> None:
+        composed = build_item(question="  café\r\nline  ")
+        decomposed = build_item(question="cafe\u0301\nline")
+
+        self.assertEqual(item_content_hash(composed), item_content_hash(decomposed))
+
+    def test_each_content_field_changes_hash(self) -> None:
+        baseline = build_item()
+        baseline_hash = item_content_hash(baseline)
+
+        for field in ITEM_CONTENT_FIELDS:
+            with self.subTest(field=field):
+                mutated = dict(baseline)
+                mutated[field] = f"{mutated[field]}-changed"
+                self.assertNotEqual(item_content_hash(mutated), baseline_hash)
+
+    def test_grouping_field_whitespace_changes_hash(self) -> None:
+        baseline = build_item()
+
+        for field in ("source", "split"):
+            with self.subTest(field=field):
+                mutated = dict(baseline)
+                mutated[field] = f" {mutated[field]}"
+                self.assertNotEqual(item_content_hash(mutated), item_content_hash(baseline))
+
+    def test_missing_content_field_is_rejected(self) -> None:
+        item = build_item()
+        del item["response_b"]
+
+        with self.assertRaisesRegex(ValueError, "requires fields: response_b"):
+            item_content_hash(item)
+
+    def test_missing_stored_hash_is_rejected_as_required(self) -> None:
+        item = build_item()
+        del item["item_content_hash"]
+
+        with self.assertRaisesRegex(ValueError, "item_content_hash.*required"):
+            validate_item_content_hash(item)
+
+    def test_non_string_stored_hash_reports_type(self) -> None:
+        item = build_item()
+        item["item_content_hash"] = None
+
+        with self.assertRaisesRegex(ValueError, "item_content_hash.*must be a string, found NoneType"):
+            validate_item_content_hash(item)
+
+
+class DatasetToFrameTests(unittest.TestCase):
+    """Verify normalized JudgeBench rows receive content identities."""
+
+    def test_adds_item_content_hash(self) -> None:
+        table = pl.DataFrame(
+            {
+                "pair_id": ["item-1"],
+                "original_id": [1],
+                "source": ["source-a"],
+                "question": ["question-a"],
+                "response_model": ["model-a"],
+                "response_A": ["answer-a"],
+                "response_B": ["answer-b"],
+                "label": ["A>B"],
+            }
+        ).to_arrow()
+        dataset = SimpleNamespace(data=SimpleNamespace(table=table))
+
+        with patch("src.data.loader.load_dataset", return_value=dataset):
+            items = _dataset_to_frame("dataset", "gpt")
+
+        item = items.row(0, named=True)
+        self.assertEqual(item["item_content_hash"], item_content_hash(item))
 
 
 class BuildBinaryMatrixTests(unittest.TestCase):
     """Verify matrix construction edge cases."""
 
     def test_warns_when_duplicate_judgments_exist(self) -> None:
-        items = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1"],
-                "item_id": ["item-1"],
-                "original_id": [1],
-                "split": ["gpt"],
-                "source": ["source"],
-                "question": ["question"],
-                "label": ["A>B"],
-            }
-        )
+        item = build_item(source="source", question="question")
+        items = pl.DataFrame([item])
         logs = pl.DataFrame(
             {
                 "item_key": ["gpt:item-1", "gpt:item-1"],
+                "item_content_hash": [item["item_content_hash"], item["item_content_hash"]],
                 "item_id": ["item-1", "item-1"],
                 "judge_id": ["judge-a", "judge-a"],
                 "prompt_order": ["original", "original"],
@@ -44,20 +180,22 @@ class BuildBinaryMatrixTests(unittest.TestCase):
         self.assertEqual(matrix["judge-a"].to_list(), [1])
 
     def test_distinguishes_same_item_id_across_splits_via_item_key(self) -> None:
-        items = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1", "claude:item-1"],
-                "item_id": ["item-1", "item-1"],
-                "original_id": [1, 1],
-                "split": ["gpt", "claude"],
-                "source": ["source-a", "source-b"],
-                "question": ["question-a", "question-b"],
-                "label": ["A>B", "B>A"],
-            }
+        gpt_item = build_item()
+        claude_item = build_item(
+            item_key="claude:item-1",
+            split="claude",
+            source="source-b",
+            question="question-b",
+            label="B>A",
         )
+        items = pl.DataFrame([gpt_item, claude_item])
         logs = pl.DataFrame(
             {
                 "item_key": ["gpt:item-1", "claude:item-1"],
+                "item_content_hash": [
+                    gpt_item["item_content_hash"],
+                    claude_item["item_content_hash"],
+                ],
                 "item_id": ["item-1", "item-1"],
                 "judge_id": ["judge-a", "judge-a"],
                 "prompt_order": ["original", "original"],
@@ -69,6 +207,114 @@ class BuildBinaryMatrixTests(unittest.TestCase):
 
         self.assertEqual(matrix.get_column("item_key").to_list(), ["claude:item-1", "gpt:item-1"])
         self.assertEqual(matrix.get_column("judge-a").to_list(), [0, 1])
+
+    def test_uses_current_content_result_when_stale_result_appears_first(self) -> None:
+        old_item = build_item()
+        current_item = build_item(question="changed question")
+        items = pl.DataFrame([current_item])
+        logs = pl.DataFrame(
+            {
+                "item_key": [old_item["item_key"], current_item["item_key"]],
+                "item_content_hash": [
+                    old_item["item_content_hash"],
+                    current_item["item_content_hash"],
+                ],
+                "item_id": ["item-1", "item-1"],
+                "judge_id": ["judge-a", "judge-a"],
+                "prompt_order": ["original", "original"],
+                "correct": [True, False],
+            }
+        )
+
+        with self.assertLogs("src.data.loader", level="WARNING") as captured:
+            matrix = build_binary_matrix(items, logs, ["judge-a"])
+
+        self.assertIn("stale judgments excluded because item content changed", captured.output[0])
+        self.assertEqual(matrix["judge-a"].to_list(), [0])
+
+    def test_excludes_stale_result_when_current_content_has_not_been_judged(self) -> None:
+        old_item = build_item()
+        current_item = build_item(label="B>A")
+        logs = pl.DataFrame(
+            {
+                "item_key": [old_item["item_key"]],
+                "item_content_hash": [old_item["item_content_hash"]],
+                "item_id": ["item-1"],
+                "judge_id": ["judge-a"],
+                "prompt_order": ["original"],
+                "correct": [True],
+            }
+        )
+
+        with self.assertLogs("src.data.loader", level="WARNING"):
+            matrix = build_binary_matrix(pl.DataFrame([current_item]), logs, ["judge-a"])
+
+        self.assertEqual(matrix["judge-a"].to_list(), [None])
+
+    def test_stale_warning_limits_item_key_sample(self) -> None:
+        old_items = [
+            build_item(item_key=f"gpt:item-{index}", item_id=f"item-{index}", original_id=index) for index in range(7)
+        ]
+        current_items = [
+            build_item(
+                item_key=f"gpt:item-{index}",
+                item_id=f"item-{index}",
+                original_id=index,
+                question="changed question",
+            )
+            for index in range(7)
+        ]
+        logs = pl.DataFrame(
+            {
+                "item_key": [item["item_key"] for item in old_items],
+                "item_content_hash": [item["item_content_hash"] for item in old_items],
+                "item_id": [item["item_id"] for item in old_items],
+                "judge_id": ["judge-a"] * 7,
+                "prompt_order": ["original"] * 7,
+                "correct": [True] * 7,
+            }
+        )
+
+        with self.assertLogs("src.data.loader", level="WARNING") as captured:
+            build_binary_matrix(pl.DataFrame(current_items), logs, ["judge-a"])
+
+        warning = captured.output[0]
+        self.assertIn("rows=7 item_key_count=7", warning)
+        self.assertIn("gpt:item-4", warning)
+        self.assertNotIn("gpt:item-5", warning)
+
+
+class LoadJudgeLogsTests(unittest.TestCase):
+    """Verify every persisted log row satisfies current result schema."""
+
+    def test_rejects_missing_hash_in_mixed_log(self) -> None:
+        item = build_item()
+        first_record = build_log_record(item)
+        second_record = build_log_record(item, prompt_order="reversed")
+        del second_record["item_content_hash"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            log_path = logs_dir / "judge-a.jsonl"
+            log_path.write_text(
+                json.dumps(first_record) + "\n" + json.dumps(second_record) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "line 2.*predates item content hashes"):
+                load_judge_logs(logs_dir)
+
+    def test_rejects_malformed_hash(self) -> None:
+        item = build_item()
+        record = build_log_record(item, item_content_hash="invalid")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            log_path = logs_dir / "judge-a.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "line 1: item_content_hash: String should match pattern"):
+                load_judge_logs(logs_dir)
 
 
 class CategoryMatcherTests(unittest.TestCase):
@@ -98,31 +344,23 @@ class ValidateItemsTests(unittest.TestCase):
 
     def test_accepts_valid_items(self) -> None:
         items = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1", "claude:item-1"],
-                "item_id": ["item-1", "item-1"],
-                "original_id": [1, 2],
-                "split": ["gpt", "claude"],
-                "source": ["source-a", "source-b"],
-                "question": ["question-a", "question-b"],
-                "label": ["A>B", "B>A"],
-            }
+            [
+                build_item(),
+                build_item(
+                    item_key="claude:item-1",
+                    original_id=2,
+                    split="claude",
+                    source="source-b",
+                    question="question-b",
+                    label="B>A",
+                ),
+            ]
         )
 
         validate_items(items)
 
     def test_rejects_duplicate_split_qualified_item_keys(self) -> None:
-        items = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1", "gpt:item-1"],
-                "item_id": ["item-1", "item-1"],
-                "original_id": [1, 2],
-                "split": ["gpt", "claude"],
-                "source": ["source-a", "source-b"],
-                "question": ["question-a", "question-b"],
-                "label": ["A>B", "B>A"],
-            }
-        )
+        items = pl.DataFrame([build_item(), build_item(original_id=2)])
 
         with self.assertRaisesRegex(
             ValueError,
@@ -131,23 +369,27 @@ class ValidateItemsTests(unittest.TestCase):
             validate_items(items)
 
     def test_rejects_invalid_labels(self) -> None:
-        items = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1", "claude:item-2"],
-                "item_id": ["item-1", "item-2"],
-                "original_id": [1, 2],
-                "split": ["gpt", "claude"],
-                "source": ["source-a", "source-b"],
-                "question": ["question-a", "question-b"],
-                "label": ["A>B", "TIE"],
-            }
-        )
+        items = pl.DataFrame([build_item(label="TIE")])
 
         with self.assertRaisesRegex(
             ValueError,
             "Sampled JudgeBench items contain unsupported labels.",
         ):
             validate_items(items)
+
+    def test_rejects_missing_item_content_hash(self) -> None:
+        item = build_item()
+        del item["item_content_hash"]
+
+        with self.assertRaisesRegex(ValueError, "missing content-hash columns: item_content_hash"):
+            validate_items(pl.DataFrame([item]))
+
+    def test_rejects_mismatched_item_content_hash(self) -> None:
+        item = build_item()
+        item["question"] = "changed after hashing"
+
+        with self.assertRaisesRegex(ValueError, "Item content hash mismatch for item_key=gpt:item-1"):
+            validate_items(pl.DataFrame([item]))
 
 
 class ValidateCoverageTests(unittest.TestCase):
@@ -224,6 +466,23 @@ class LoadOrPrepareItemsTests(unittest.TestCase):
                 ValueError,
                 "predate split-qualified item keys.*--refresh-items",
             ):
+                load_or_prepare_items(config)
+
+    def test_rejects_cached_items_without_item_content_hash(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml")).model_copy(deep=True)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config.data.output_dir = root / "processed"
+            config.data.raw_dir = root / "raw"
+            config.data.logs_dir = root / "logs"
+            config.inference.output_dir = root / "posteriors"
+            legacy_item = build_item()
+            del legacy_item["item_content_hash"]
+            config.ensure_directories()
+            pl.DataFrame([legacy_item]).write_parquet(config.data.item_path)
+
+            with self.assertRaisesRegex(ValueError, "predate item content hashes.*--refresh-items"):
                 load_or_prepare_items(config)
 
 

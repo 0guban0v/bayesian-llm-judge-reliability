@@ -8,7 +8,7 @@ from pathlib import Path
 
 import polars as pl
 
-from src.data.loader import build_and_write_matrix, load_or_prepare_items
+from src.data.loader import build_and_write_matrix, load_or_prepare_items, validate_item_content_hashes
 from src.data.matrix_semantics import judge_columns as shared_judge_columns
 from src.data.matrix_semantics import summarize_matrix as shared_summarize_matrix
 from src.logging_utils import configure_logging, format_table_for_log
@@ -42,6 +42,7 @@ def validate_items(items: pl.DataFrame) -> None:
 
     if items.height == 0:
         raise ValueError("No JudgeBench items were loaded.")
+    validate_item_content_hashes(items)
     if items.get_column("item_key").is_duplicated().any():
         raise ValueError("Sampled JudgeBench items contain duplicate split-qualified item keys.")
     invalid_labels = items.filter(~pl.col("label").is_in(["A>B", "B>A"]))

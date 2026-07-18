@@ -10,22 +10,26 @@ from pathlib import Path
 
 import polars as pl
 from datasets import load_dataset
+from pydantic import ValidationError
 
+from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash, validate_item_content_hash
 from src.data.matrix_semantics import (
     ITEM_METADATA_COLUMNS,
     first_original_judgments,
     pivot_original_judgments,
 )
 from src.logging_utils import configure_logging
-from src.schemas import ExperimentConfig
+from src.schemas import ExperimentConfig, JudgeResult
 
 logger = logging.getLogger(__name__)
 
 PARQUET_COMPRESSION = "zstd"
 PARQUET_COMPRESSION_LEVEL = 19
+STALE_ITEM_KEY_SAMPLE_SIZE = 5
 
 ITEM_COLUMNS = [
     "item_key",
+    "item_content_hash",
     "item_id",
     "original_id",
     "split",
@@ -119,6 +123,11 @@ def _dataset_to_frame(dataset_name: str, split_name: str) -> pl.DataFrame:
                 pl.format("{}:{}", pl.lit(split_name), pl.col("item_id").cast(pl.String)).alias("item_key"),
             ]
         )
+        .with_columns(
+            pl.struct(ITEM_CONTENT_FIELDS)
+            .map_elements(item_content_hash, return_dtype=pl.String)
+            .alias("item_content_hash")
+        )
         .select(ITEM_COLUMNS)
     )
 
@@ -156,14 +165,31 @@ def write_frame(frame: pl.DataFrame, path: Path) -> None:
     )
 
 
+def validate_item_content_hashes(items: pl.DataFrame) -> None:
+    """Require every prepared item to match its stored content hash."""
+
+    required_columns = ["item_key", "item_content_hash", *ITEM_CONTENT_FIELDS]
+    missing_columns = [column for column in required_columns if column not in items.columns]
+    if missing_columns:
+        raise ValueError(f"JudgeBench items are missing content-hash columns: {', '.join(missing_columns)}")
+    for item in items.select(required_columns).iter_rows(named=True):
+        validate_item_content_hash(item)
+
+
 def validate_cached_items(items: pl.DataFrame, item_path: Path) -> None:
-    """Require cached item parquets to contain the current split-qualified key schema."""
+    """Require cached item parquets to contain the current content-addressed schema."""
 
     if "item_key" not in items.columns:
         raise ValueError(
             f"Cached JudgeBench items at {item_path} are unsupported because they predate split-qualified item keys. "
             "Re-run with --refresh-items to rebuild the cached item subset."
         )
+    if "item_content_hash" not in items.columns:
+        raise ValueError(
+            f"Cached JudgeBench items at {item_path} are unsupported because they predate item content hashes. "
+            "Re-run with --refresh-items to rebuild the cached item subset."
+        )
+    validate_item_content_hashes(items)
 
 
 def load_or_prepare_items(config: ExperimentConfig, refresh: bool = False) -> pl.DataFrame:
@@ -189,26 +215,79 @@ def load_judge_logs(logs_dir: Path) -> pl.DataFrame:
     rows: list[dict[str, object]] = []
     for log_path in sorted(logs_dir.glob("*.jsonl")):
         with log_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                if line.strip():
-                    rows.append(json.loads(line))
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Judge log {log_path} is malformed at line {line_number}: invalid JSON: {exc.msg}."
+                    ) from exc
+                if not isinstance(record, dict):
+                    raise ValueError(f"Judge log {log_path} is malformed at line {line_number}: expected JSON object.")
+                if "item_key" not in record:
+                    raise ValueError(
+                        f"Judge log {log_path} is unsupported at line {line_number} because it predates "
+                        "split-qualified item keys. Delete it and re-run judges with the current pipeline."
+                    )
+                if "item_content_hash" not in record:
+                    raise ValueError(
+                        f"Judge log {log_path} is unsupported at line {line_number} because it predates item "
+                        "content hashes. Delete it and re-run judges with the current item content."
+                    )
+                try:
+                    parsed_record = JudgeResult.model_validate(record)
+                except ValidationError as exc:
+                    first_error = exc.errors()[0]
+                    field = ".".join(str(part) for part in first_error["loc"])
+                    raise ValueError(
+                        f"Judge log {log_path} is malformed at line {line_number}: {field}: {first_error['msg']}."
+                    ) from exc
+                rows.append(parsed_record.to_json_dict())
     if not rows:
         return pl.DataFrame(
             schema={
                 "item_key": pl.String,
+                "item_content_hash": pl.String,
                 "item_id": pl.String,
                 "judge_id": pl.String,
                 "prompt_order": pl.String,
                 "correct": pl.Boolean,
             }
         )
-    logs = pl.DataFrame(rows)
-    if "item_key" not in logs.columns:
-        raise ValueError(
-            f"Judge logs in {logs_dir} are unsupported because they predate split-qualified item keys. "
-            "Delete them and re-run judges with the current pipeline."
+    return pl.DataFrame(rows)
+
+
+def select_current_item_logs(items: pl.DataFrame, logs: pl.DataFrame) -> pl.DataFrame:
+    """Keep log rows whose content hash matches current item content."""
+
+    required_column = "item_content_hash"
+    if required_column not in items.columns:
+        raise ValueError(f"JudgeBench items are missing content-hash columns: {required_column}")
+    if required_column not in logs.columns:
+        raise ValueError("Judge logs are missing content-hash column: item_content_hash")
+
+    current_items = items.select(["item_key", "item_content_hash"])
+    logs_for_current_keys = logs.join(current_items.select("item_key"), on="item_key", how="semi")
+    stale_logs = logs_for_current_keys.join(
+        current_items,
+        on=["item_key", "item_content_hash"],
+        how="anti",
+    )
+    if stale_logs.height > 0:
+        stale_item_keys = stale_logs.get_column("item_key").unique(maintain_order=True)
+        logger.warning(
+            "stale judgments excluded because item content changed rows=%s item_key_count=%s item_key_sample=%s",
+            stale_logs.height,
+            len(stale_item_keys),
+            stale_item_keys.head(STALE_ITEM_KEY_SAMPLE_SIZE).to_list(),
         )
-    return logs
+    return logs.join(
+        current_items,
+        on=["item_key", "item_content_hash"],
+        how="semi",
+    )
 
 
 def build_binary_matrix(
@@ -218,7 +297,8 @@ def build_binary_matrix(
 ) -> pl.DataFrame:
     """Build an item-by-judge correctness matrix from original-order logs."""
 
-    first_judgments = first_original_judgments(logs, duplicate_logger=logger)
+    current_logs = select_current_item_logs(items, logs)
+    first_judgments = first_original_judgments(current_logs, duplicate_logger=logger)
     if first_judgments.height == 0:
         matrix = items.select(sorted(ITEM_METADATA_COLUMNS))
     else:

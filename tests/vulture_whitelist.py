@@ -17,6 +17,7 @@ _ = (
     InferenceConfig.sampler,
     ExperimentConfig.ensure_unique_judge_ids,
     JudgeResult.ground_truth_label,
+    JudgeResult.item_content_hash,
     JudgeResult.item_key,
     JudgeResult.prompt_variant,
     sample_prior_values,

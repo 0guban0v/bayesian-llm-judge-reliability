@@ -10,15 +10,48 @@ from pathlib import Path
 from unittest.mock import patch
 
 import polars as pl
+from src.data.item_identity import item_content_hash
 from src.judges.prompts import FIXED_PROMPT_VARIANT, PROMPT_PROTOCOL_VERSION
 from src.judges.runner import (
     judge_item,
     judge_metadata_fields,
     load_processed_keys,
     run_all,
+    run_judge,
     validate_log_metadata,
 )
 from src.schemas import ExperimentConfig
+
+
+def build_item(
+    *,
+    item_key: str = "gpt:item-1",
+    item_id: str = "item-1",
+    split: str = "gpt",
+    source: str = "s1",
+    question: str = "q1",
+    response_a: str = "a1",
+    response_b: str = "b1",
+    label: str = "A>B",
+    original_id: int = 1,
+    response_model: str = "m1",
+) -> dict[str, object]:
+    """Return one item carrying its canonical content hash."""
+
+    item: dict[str, object] = {
+        "item_key": item_key,
+        "item_id": item_id,
+        "original_id": original_id,
+        "split": split,
+        "source": source,
+        "question": question,
+        "response_model": response_model,
+        "response_a": response_a,
+        "response_b": response_b,
+        "label": label,
+    }
+    item["item_content_hash"] = item_content_hash(item)
+    return item
 
 
 class RunAllTests(unittest.TestCase):
@@ -26,34 +59,21 @@ class RunAllTests(unittest.TestCase):
 
     def test_run_all_materializes_items_once_before_iterating_judges(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
-        items = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1", "claude:item-2"],
-                "item_id": ["item-1", "item-2"],
-                "original_id": [1, 2],
-                "split": ["gpt", "claude"],
-                "source": ["s1", "s2"],
-                "question": ["q1", "q2"],
-                "response_model": ["m1", "m2"],
-                "response_a": ["a1", "a2"],
-                "response_b": ["b1", "b2"],
-                "label": ["A>B", "B>A"],
-            }
+        first_item = build_item()
+        second_item = build_item(
+            item_key="claude:item-2",
+            item_id="item-2",
+            original_id=2,
+            split="claude",
+            source="s2",
+            question="q2",
+            response_model="m2",
+            response_a="a2",
+            response_b="b2",
+            label="B>A",
         )
-        expected_items = [
-            {
-                "item_key": "gpt:item-1",
-                "item_id": "item-1",
-                "original_id": 1,
-                "split": "gpt",
-                "source": "s1",
-                "question": "q1",
-                "response_model": "m1",
-                "response_a": "a1",
-                "response_b": "b1",
-                "label": "A>B",
-            }
-        ]
+        items = pl.DataFrame([first_item, second_item])
+        expected_items = [first_item]
         captured_item_lists: list[list[dict[str, object]]] = []
 
         def fake_run_judge(
@@ -91,16 +111,7 @@ class JudgeItemTests(unittest.TestCase):
     def test_judge_item_records_fixed_prompt_variant(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
         judge = config.judges[0]
-        item = {
-            "item_key": "gpt:item-1",
-            "item_id": "item-1",
-            "split": "gpt",
-            "source": "s1",
-            "question": "q1",
-            "response_a": "a1",
-            "response_b": "b1",
-            "label": "A>B",
-        }
+        item = build_item()
 
         with (
             patch("src.judges.runner.generate_text", return_value="FINAL VERDICT: A"),
@@ -113,21 +124,13 @@ class JudgeItemTests(unittest.TestCase):
         self.assertEqual(result.prompt_variant, FIXED_PROMPT_VARIANT)
         self.assertEqual(result.prompt_protocol_version, PROMPT_PROTOCOL_VERSION)
         self.assertEqual(result.model, judge.model)
+        self.assertEqual(result.item_content_hash, item["item_content_hash"])
         self.assertTrue(result.correct)
 
     def test_judge_result_rejects_unknown_jsonl_fields(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
         judge = config.judges[0]
-        item = {
-            "item_key": "gpt:item-1",
-            "item_id": "item-1",
-            "split": "gpt",
-            "source": "s1",
-            "question": "q1",
-            "response_a": "a1",
-            "response_b": "b1",
-            "label": "A>B",
-        }
+        item = build_item()
 
         with (
             patch("src.judges.runner.generate_text", return_value="FINAL VERDICT: A"),
@@ -157,6 +160,7 @@ class LogMetadataTests(unittest.TestCase):
 
         record = {
             "item_key": "gpt:item-1",
+            "item_content_hash": "0" * 64,
             "item_id": "item-1",
             "judge_id": judge_id,
             "timestamp": "2026-04-16T00:00:00+00:00",
@@ -283,6 +287,49 @@ class LogMetadataTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, r"Judge log .* is malformed at line 1"):
                 load_processed_keys(log_path)
+
+    def test_load_processed_keys_qualifies_item_by_content_hash(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        record = self.build_log_record(judge.id, **judge_metadata_fields(judge))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            self.assertEqual(
+                load_processed_keys(log_path),
+                {("gpt:item-1", "0" * 64, "original")},
+            )
+
+    def test_run_judge_reprocesses_item_when_content_hash_changes(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        old_item = build_item()
+        changed_item = build_item(question="changed question")
+        old_record = self.build_log_record(
+            judge.id,
+            item_content_hash=old_item["item_content_hash"],
+            **judge_metadata_fields(judge),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            config = config.model_copy(update={"data": config.data.model_copy(update={"logs_dir": logs_dir})})
+            log_path = logs_dir / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(old_record) + "\n", encoding="utf-8")
+
+            with (
+                patch("src.judges.runner.generate_text", return_value="FINAL VERDICT: A"),
+                patch("src.judges.runner.time.perf_counter", side_effect=[0.0, 0.01]),
+            ):
+                completed = run_judge(config, judge, [changed_item])
+
+            records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(completed, 1)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[-1]["item_content_hash"], changed_item["item_content_hash"])
 
 
 if __name__ == "__main__":
