@@ -7,7 +7,15 @@ import unittest
 from pathlib import Path
 
 import yaml
-from src.schemas import AnalysisConfig, DataConfig, ExperimentConfig, InferenceConfig, JudgeResult, PriorConfig
+from src.schemas import (
+    AnalysisConfig,
+    DataConfig,
+    ExperimentConfig,
+    InferenceConfig,
+    JudgeConfig,
+    JudgeResult,
+    PriorConfig,
+)
 
 
 def judge_result_payload() -> dict[str, object]:
@@ -103,6 +111,19 @@ class DataConfigTests(unittest.TestCase):
     def test_rejects_unknown_repeat_policy(self) -> None:
         with self.assertRaisesRegex(ValueError, "Input should be 'reject', 'first' or 'latest'"):
             DataConfig(source="judgebench", subset_size=1, repeat_policy="newest")
+
+
+class JudgeConfigTests(unittest.TestCase):
+    """Verify repeated-inference scheduling configuration."""
+
+    def test_num_repeats_defaults_to_one(self) -> None:
+        config = JudgeConfig(id="judge-a", model="model-a")
+
+        self.assertEqual(config.num_repeats, 1)
+
+    def test_num_repeats_requires_positive_count(self) -> None:
+        with self.assertRaisesRegex(ValueError, "(?s)num_repeats.*greater than or equal to 1"):
+            JudgeConfig(id="judge-a", model="model-a", num_repeats=0)
 
 
 class ExperimentConfigTests(unittest.TestCase):

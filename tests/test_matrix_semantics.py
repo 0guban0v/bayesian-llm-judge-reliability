@@ -31,6 +31,16 @@ class MatrixSemanticsTests(unittest.TestCase):
             }
         )
 
+    def test_empty_resolution_matches_populated_output_schema(self) -> None:
+        empty = resolve_original_judgments(pl.DataFrame())
+        populated = resolve_original_judgments(self.duplicate_logs().head(1))
+
+        self.assertEqual(empty.schema, populated.schema)
+        self.assertEqual(
+            empty.columns,
+            ["log_order", "item_key", "judge_id", "correct_int"],
+        )
+
     def test_reject_policy_fails_on_duplicate(self) -> None:
         with self.assertRaisesRegex(
             ValueError,

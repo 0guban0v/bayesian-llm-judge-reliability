@@ -227,12 +227,13 @@ def run_judge(
     validate_log_metadata(log_path, judge)
     processed = load_processed_keys(log_path)
     prompt_orders = ("original", "reversed") if judge.reverse_order else ("original",)
-    tasks: list[tuple[dict[str, Any], str]] = []
+    tasks: list[tuple[dict[str, Any], str, int]] = []
     for item in items:
         for prompt_order in prompt_orders:
-            key = (item["item_key"], item["item_content_hash"], prompt_order, 0)
-            if key not in processed:
-                tasks.append((item, prompt_order))
+            for repeat_index in range(judge.num_repeats):
+                key = (item["item_key"], item["item_content_hash"], prompt_order, repeat_index)
+                if key not in processed:
+                    tasks.append((item, prompt_order, repeat_index))
     logger.info(
         "judge=%s backend=%s model=%s prompt_variant=%s pending_tasks=%s log_path=%s",
         judge.id,
@@ -248,23 +249,25 @@ def run_judge(
 
     completed = 0
     with log_path.open("a", encoding="utf-8") as handle:
-        for item_index, (item, prompt_order) in enumerate(tasks, start=1):
+        for item_index, (item, prompt_order, repeat_index) in enumerate(tasks, start=1):
             logger.info(
-                "judge=%s start item=%s order=%s index=%s/%s",
+                "judge=%s start item=%s order=%s repeat=%s index=%s/%s",
                 judge.id,
                 item["item_id"],
                 prompt_order,
+                repeat_index,
                 item_index,
                 len(tasks),
             )
-            result = judge_item(judge, item, prompt_order)
+            result = judge_item(judge, item, prompt_order, repeat_index=repeat_index)
             write_result(handle, result)
             completed += 1
             logger.info(
-                "judge=%s done item=%s order=%s verdict=%s correct=%s latency_ms=%s",
+                "judge=%s done item=%s order=%s repeat=%s verdict=%s correct=%s latency_ms=%s",
                 judge.id,
                 result.item_id,
                 result.prompt_order,
+                result.repeat_index,
                 result.parsed_verdict,
                 result.correct,
                 result.latency_ms,

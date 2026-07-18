@@ -205,6 +205,7 @@ class LogMetadataTests(unittest.TestCase):
 
         self.assertEqual(metadata_fields["prompt_variant"], FIXED_PROMPT_VARIANT)
         self.assertEqual(metadata_fields["prompt_protocol_version"], PROMPT_PROTOCOL_VERSION)
+        self.assertNotIn("num_repeats", metadata_fields)
 
     def test_validate_log_metadata_rejects_legacy_log_without_embedded_metadata(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
@@ -359,6 +360,40 @@ class LogMetadataTests(unittest.TestCase):
         self.assertEqual(len(records), 2)
         self.assertEqual(records[-1]["item_content_hash"], changed_item["item_content_hash"])
         self.assertEqual(records[-1]["repeat_index"], 0)
+
+    def test_run_judge_schedules_and_resumes_each_repeat_index(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0].model_copy(update={"num_repeats": 3})
+        item = build_item()
+        existing_record = self.build_log_record(
+            judge.id,
+            item_content_hash=item["item_content_hash"],
+            repeat_index=0,
+            **judge_metadata_fields(judge),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            config = config.model_copy(update={"data": config.data.model_copy(update={"logs_dir": logs_dir})})
+            log_path = logs_dir / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(existing_record) + "\n", encoding="utf-8")
+
+            with (
+                patch(
+                    "src.judges.runner.generate_text",
+                    side_effect=["FINAL VERDICT: A", "FINAL VERDICT: B"],
+                ),
+                patch(
+                    "src.judges.runner.time.perf_counter",
+                    side_effect=[0.0, 0.01, 0.02, 0.03],
+                ),
+            ):
+                completed = run_judge(config, judge, [item])
+
+            records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(completed, 2)
+        self.assertEqual([record["repeat_index"] for record in records], [0, 1, 2])
 
 
 if __name__ == "__main__":

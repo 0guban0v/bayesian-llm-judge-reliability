@@ -63,6 +63,7 @@ class JudgeConfig(StrictConfigModel):
     backend: Literal["mlx"] = "mlx"
     model: str
     max_tokens: int = Field(gt=0, default=256)
+    num_repeats: int = Field(ge=1, default=1)
     trust_remote_code: bool = False
     reverse_order: bool = False
 

@@ -12,6 +12,19 @@ ITEM_METADATA_COLUMNS = {"item_key", "item_id", "original_id", "split", "source"
 DUPLICATE_SAMPLE_SIZE = 5
 
 
+def empty_resolved_judgments() -> pl.DataFrame:
+    """Return empty frame matching resolved-judgment output schema."""
+
+    return pl.DataFrame(
+        schema={
+            "log_order": pl.UInt32,
+            "item_key": pl.String,
+            "judge_id": pl.String,
+            "correct_int": pl.Int8,
+        }
+    )
+
+
 def judge_columns(matrix: pl.DataFrame) -> list[str]:
     """Return the columns corresponding to judge outputs."""
 
@@ -63,14 +76,7 @@ def resolve_original_judgments(
         raise ValueError(f"Unsupported repeat policy: {repeat_policy}")
 
     if logs.height == 0:
-        return pl.DataFrame(
-            schema={
-                "item_key": pl.String,
-                "item_id": pl.String,
-                "judge_id": pl.String,
-                "correct_int": pl.Int8,
-            }
-        )
+        return empty_resolved_judgments()
     ordered_logs = logs.with_row_index("log_order")
     duplicate_keys = ["item_key", "judge_id", "prompt_order"]
     duplicate_judgments = ordered_logs.group_by(duplicate_keys, maintain_order=True).len().filter(pl.col("len") > 1)
