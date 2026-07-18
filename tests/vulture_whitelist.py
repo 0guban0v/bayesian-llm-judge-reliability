@@ -20,5 +20,6 @@ _ = (
     JudgeResult.item_content_hash,
     JudgeResult.item_key,
     JudgeResult.prompt_variant,
+    JudgeResult.repeat_index,
     sample_prior_values,
 )

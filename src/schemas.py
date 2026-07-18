@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from src.data.item_identity import ITEM_CONTENT_HASH_PATTERN
 
+RepeatPolicy = Literal["reject", "first", "latest"]
+
 
 class StrictConfigModel(BaseModel):
     """Base model that rejects unknown fields in configuration payloads."""
@@ -39,6 +41,7 @@ class DataConfig(StrictConfigModel):
     logs_dir: Path = Path("data/logs")
     item_file: str = "judgebench_items.parquet"
     matrix_file: str = "judge_matrix.parquet"
+    repeat_policy: RepeatPolicy = "reject"
 
     @property
     def item_path(self) -> Path:
@@ -250,6 +253,7 @@ class JudgeResult(StrictConfigModel):
     prompt_variant: str
     prompt_protocol_version: str
     prompt_order: Literal["original", "reversed"]
+    repeat_index: int = Field(ge=0)
     model: str
     max_tokens: int = Field(gt=0)
     trust_remote_code: bool = False

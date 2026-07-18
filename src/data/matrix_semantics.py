@@ -6,7 +6,10 @@ import logging
 
 import polars as pl
 
+from src.schemas import RepeatPolicy
+
 ITEM_METADATA_COLUMNS = {"item_key", "item_id", "original_id", "split", "source", "question", "label"}
+DUPLICATE_SAMPLE_SIZE = 5
 
 
 def judge_columns(matrix: pl.DataFrame) -> list[str]:
@@ -48,12 +51,16 @@ def observed_accuracy_frame(matrix: pl.DataFrame, judge_ids: list[str] | None = 
     return filtered.sort("judge_order").select(["judge_id", "accuracy"])
 
 
-def first_original_judgments(
+def resolve_original_judgments(
     logs: pl.DataFrame,
     *,
+    repeat_policy: RepeatPolicy = "reject",
     duplicate_logger: logging.Logger | None = None,
 ) -> pl.DataFrame:
-    """Return first scored original-order judgments per item/judge pair."""
+    """Resolve repeated tasks, then return scored original-order judgments."""
+
+    if repeat_policy not in {"reject", "first", "latest"}:
+        raise ValueError(f"Unsupported repeat policy: {repeat_policy}")
 
     if logs.height == 0:
         return pl.DataFrame(
@@ -64,40 +71,39 @@ def first_original_judgments(
                 "correct_int": pl.Int8,
             }
         )
-    original_logs = (
-        logs.filter(pl.col("prompt_order").eq("original") & pl.col("correct").is_not_null())
-        .with_row_index("log_order")
-        .sort("log_order")
-        .with_columns(pl.col("correct").cast(pl.Int8).alias("correct_int"))
-    )
-    if original_logs.height == 0:
-        return pl.DataFrame(
-            schema={
-                "item_key": pl.String,
-                "item_id": pl.String,
-                "judge_id": pl.String,
-                "correct_int": pl.Int8,
-            }
-        )
-    duplicate_judgments = original_logs.group_by(["item_key", "judge_id"]).len().filter(pl.col("len") > 1)
-    if duplicate_judgments.height > 0 and duplicate_logger is not None:
-        duplicate_logger.warning(
-            "duplicate original-order judgments detected; keeping first result per item/judge pair duplicates=%s",
-            duplicate_judgments.select(["item_key", "judge_id", "len"]).to_dicts(),
-        )
+    ordered_logs = logs.with_row_index("log_order")
+    duplicate_keys = ["item_key", "judge_id", "prompt_order"]
+    duplicate_judgments = ordered_logs.group_by(duplicate_keys, maintain_order=True).len().filter(pl.col("len") > 1)
+    if duplicate_judgments.height > 0:
+        if repeat_policy == "reject":
+            duplicate = duplicate_judgments.sort(duplicate_keys).row(0, named=True)
+            raise ValueError(
+                f"Duplicate judgment: item_key={duplicate['item_key']} judge_id={duplicate['judge_id']} "
+                f"prompt_order={duplicate['prompt_order']} count={duplicate['len']}"
+            )
+        if duplicate_logger is not None:
+            duplicate_logger.warning(
+                "duplicate judgments resolved repeat_policy=%s group_count=%s group_sample=%s",
+                repeat_policy,
+                duplicate_judgments.height,
+                duplicate_judgments.head(DUPLICATE_SAMPLE_SIZE).to_dicts(),
+            )
+
+    keep = "first" if repeat_policy == "first" else "last"
     return (
-        original_logs.select(["log_order", "item_key", "judge_id", "correct_int"])
-        .group_by(["item_key", "judge_id"], maintain_order=True)
-        .agg(pl.col("correct_int").first().alias("correct_int"))
+        ordered_logs.unique(subset=duplicate_keys, keep=keep, maintain_order=True)
+        .filter(pl.col("prompt_order").eq("original") & pl.col("correct").is_not_null())
+        .with_columns(pl.col("correct").cast(pl.Int8).alias("correct_int"))
+        .select(["log_order", "item_key", "judge_id", "correct_int"])
     )
 
 
-def pivot_original_judgments(first_judgments: pl.DataFrame) -> pl.DataFrame:
-    """Pivot first scored original-order judgments into a wide judge matrix."""
+def pivot_original_judgments(resolved_judgments: pl.DataFrame) -> pl.DataFrame:
+    """Pivot resolved scored original-order judgments into a wide judge matrix."""
 
-    if first_judgments.height == 0:
+    if resolved_judgments.height == 0:
         return pl.DataFrame(schema={"item_key": pl.String})
-    return first_judgments.pivot(
+    return resolved_judgments.pivot(
         index="item_key",
         on="judge_id",
         values="correct_int",

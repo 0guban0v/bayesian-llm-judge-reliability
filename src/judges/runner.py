@@ -72,6 +72,11 @@ def validate_log_metadata(log_path: Path, judge: JudgeConfig) -> None:
                     f"Judge '{judge.id}' log is unsupported because it predates split-qualified item keys. "
                     f"Delete {log_path} and re-run with the current prompt protocol."
                 )
+            if "repeat_index" not in record:
+                raise ValueError(
+                    f"Judge '{judge.id}' log is unsupported because it predates explicit repeat indices. "
+                    f"Delete {log_path} and re-run with the current prompt protocol."
+                )
             try:
                 parsed_record = JudgeResult.model_validate(record)
             except ValidationError as exc:
@@ -99,12 +104,12 @@ def validate_log_metadata(log_path: Path, judge: JudgeConfig) -> None:
                 )
 
 
-def load_processed_keys(log_path: Path) -> set[tuple[str, str, str]]:
+def load_processed_keys(log_path: Path) -> set[tuple[str, str, str, int]]:
     """Return content-qualified keys for previously completed judge tasks."""
 
     if not log_path.exists():
         return set()
-    processed: set[tuple[str, str, str]] = set()
+    processed: set[tuple[str, str, str, int]] = set()
     with log_path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             if not line.strip():
@@ -126,6 +131,7 @@ def load_processed_keys(log_path: Path) -> set[tuple[str, str, str]]:
                     parsed_record.item_key,
                     parsed_record.item_content_hash,
                     parsed_record.prompt_order,
+                    parsed_record.repeat_index,
                 )
             )
     return processed
@@ -154,6 +160,7 @@ def judge_item(
     judge: JudgeConfig,
     item: dict[str, Any],
     prompt_order: str,
+    repeat_index: int = 0,
 ) -> JudgeResult:
     """Run one MLX judge on one item and normalize the verdict back to original order."""
 
@@ -190,6 +197,7 @@ def judge_item(
         prompt_variant=FIXED_PROMPT_VARIANT,
         prompt_protocol_version=PROMPT_PROTOCOL_VERSION,
         prompt_order=cast(Literal["original", "reversed"], prompt_order),
+        repeat_index=repeat_index,
         model=judge.model,
         max_tokens=judge.max_tokens,
         trust_remote_code=judge.trust_remote_code,
@@ -222,7 +230,7 @@ def run_judge(
     tasks: list[tuple[dict[str, Any], str]] = []
     for item in items:
         for prompt_order in prompt_orders:
-            key = (item["item_key"], item["item_content_hash"], prompt_order)
+            key = (item["item_key"], item["item_content_hash"], prompt_order, 0)
             if key not in processed:
                 tasks.append((item, prompt_order))
     logger.info(

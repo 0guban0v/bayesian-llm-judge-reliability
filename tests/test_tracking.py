@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 from src.schemas import ExperimentConfig
 from src.tracking import (
     cpu_name,
     inferred_accelerator,
+    log_config,
     normalize_process_ru_maxrss_bytes,
     rank_order_string,
     resolved_pairwise_count,
@@ -29,6 +30,21 @@ class TrackingHelperTests(unittest.TestCase):
             run_name(config),
             "bayesian-llm-judge-reliability-gpt-source-hier-gpt-2PL-source_hier",
         )
+
+    def test_log_config_records_repeat_policy(self) -> None:
+        config = ExperimentConfig.from_yaml("configs/experiment.yaml")
+        mlflow = MagicMock()
+
+        with (
+            patch("src.tracking._mlflow", return_value=mlflow),
+            patch("src.tracking.system_telemetry_params", return_value={}),
+        ):
+            log_config(config)
+
+        logged_params = {key: value for call in mlflow.log_params.call_args_list for key, value in call.args[0].items()}
+        self.assertEqual(logged_params["repeat_policy"], "reject")
+        resolved_config = mlflow.log_text.call_args.args[0]
+        self.assertIn("repeat_policy: reject", resolved_config)
 
     def test_rank_order_string_uses_posterior_mean_order(self) -> None:
         posterior = {

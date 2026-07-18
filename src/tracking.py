@@ -190,6 +190,7 @@ def log_config(config: ExperimentConfig) -> None:
             "seed": config.experiment.seed,
             "subset_size": config.data.subset_size,
             "splits": ",".join(config.data.splits),
+            "repeat_policy": config.data.repeat_policy,
             "model_type": config.model.type,
             "model_variant": config.model.variant,
             "num_warmup": config.inference.num_warmup,

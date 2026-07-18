@@ -15,11 +15,11 @@ from pydantic import ValidationError
 from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash, validate_item_content_hash
 from src.data.matrix_semantics import (
     ITEM_METADATA_COLUMNS,
-    first_original_judgments,
     pivot_original_judgments,
+    resolve_original_judgments,
 )
 from src.logging_utils import configure_logging
-from src.schemas import ExperimentConfig, JudgeResult
+from src.schemas import ExperimentConfig, JudgeResult, RepeatPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +236,11 @@ def load_judge_logs(logs_dir: Path) -> pl.DataFrame:
                         f"Judge log {log_path} is unsupported at line {line_number} because it predates item "
                         "content hashes. Delete it and re-run judges with the current item content."
                     )
+                if "repeat_index" not in record:
+                    raise ValueError(
+                        f"Judge log {log_path} is unsupported at line {line_number} because it predates explicit "
+                        "repeat indices. Delete it and re-run judges with the current pipeline."
+                    )
                 try:
                     parsed_record = JudgeResult.model_validate(record)
                 except ValidationError as exc:
@@ -253,6 +258,7 @@ def load_judge_logs(logs_dir: Path) -> pl.DataFrame:
                 "item_id": pl.String,
                 "judge_id": pl.String,
                 "prompt_order": pl.String,
+                "repeat_index": pl.Int64,
                 "correct": pl.Boolean,
             }
         )
@@ -294,15 +300,20 @@ def build_binary_matrix(
     items: pl.DataFrame,
     logs: pl.DataFrame,
     judge_ids: list[str],
+    repeat_policy: RepeatPolicy = "reject",
 ) -> pl.DataFrame:
     """Build an item-by-judge correctness matrix from original-order logs."""
 
     current_logs = select_current_item_logs(items, logs)
-    first_judgments = first_original_judgments(current_logs, duplicate_logger=logger)
-    if first_judgments.height == 0:
+    resolved_judgments = resolve_original_judgments(
+        current_logs,
+        repeat_policy=repeat_policy,
+        duplicate_logger=logger,
+    )
+    if resolved_judgments.height == 0:
         matrix = items.select(sorted(ITEM_METADATA_COLUMNS))
     else:
-        pivoted = pivot_original_judgments(first_judgments)
+        pivoted = pivot_original_judgments(resolved_judgments)
         matrix = items.select(sorted(ITEM_METADATA_COLUMNS)).join(pivoted, on="item_key", how="left")
 
     for judge_id in judge_ids:
@@ -320,7 +331,12 @@ def build_and_write_matrix(
 
     prepared_items = items if items is not None else load_or_prepare_items(config)
     logs = load_judge_logs(config.data.logs_dir)
-    matrix = build_binary_matrix(prepared_items, logs, [judge.id for judge in config.judges])
+    matrix = build_binary_matrix(
+        prepared_items,
+        logs,
+        [judge.id for judge in config.judges],
+        repeat_policy=config.data.repeat_policy,
+    )
     write_frame(matrix, config.data.matrix_path)
     return matrix
 
