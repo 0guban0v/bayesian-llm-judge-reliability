@@ -45,3 +45,5 @@ data/processed/**/*.nc
 *.aux
 *.fdb_latexmk
 *.fls
+docs/TODO.md
+AGENTS.md
