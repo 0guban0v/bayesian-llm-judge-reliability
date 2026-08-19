@@ -14,12 +14,19 @@ from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash, valid
 from src.data.loader import (
     _dataset_to_frame,
     _matches_categories,
+    build_analysis_table,
+    build_and_write_analysis_artifacts,
     build_and_write_matrix,
     build_binary_matrix,
     load_judge_logs,
     load_or_prepare_items,
 )
-from src.data.validate import assert_complete_judge_coverage, assert_complete_prompt_order_coverage, validate_items
+from src.data.validate import (
+    assert_complete_judge_coverage,
+    assert_complete_original_choice_coverage,
+    assert_complete_prompt_order_coverage,
+    validate_items,
+)
 from src.judges.prompts import FIXED_PROMPT_VARIANT, PROMPT_PROTOCOL_VERSION
 from src.schemas import ExperimentConfig, JudgeConfig
 
@@ -171,6 +178,7 @@ class BuildBinaryMatrixTests(unittest.TestCase):
                 "judge_id": ["judge-a", "judge-a"],
                 "prompt_order": ["original", "original"],
                 "repeat_index": [0, 1],
+                "parsed_verdict": ["A", "B"],
                 "correct": [True, False],
             }
         )
@@ -217,6 +225,7 @@ class BuildBinaryMatrixTests(unittest.TestCase):
                 "judge_id": [config.judges[0].id, config.judges[0].id],
                 "prompt_order": ["original", "original"],
                 "repeat_index": [0, 1],
+                "parsed_verdict": ["A", "B"],
                 "correct": [True, False],
             }
         )
@@ -229,6 +238,85 @@ class BuildBinaryMatrixTests(unittest.TestCase):
             matrix = build_and_write_matrix(config, items)
 
         self.assertEqual(matrix[config.judges[0].id].to_list(), [0])
+
+    def test_analysis_table_preserves_both_orders_and_choice_spaces(self) -> None:
+        item = build_item()
+        logs = pl.DataFrame(
+            [
+                build_log_record(item, prompt_order="original", parsed_verdict="A", correct=True),
+                build_log_record(
+                    item,
+                    prompt_order="reversed",
+                    raw_response="FINAL VERDICT: A",
+                    parsed_verdict="B",
+                    correct=False,
+                ),
+            ]
+        )
+
+        analysis = build_analysis_table(pl.DataFrame([item]), logs).sort("prompt_order")
+
+        self.assertEqual(analysis["prompt_order"].to_list(), ["original", "reversed"])
+        self.assertEqual(analysis["displayed_choice"].to_list(), ["A", "A"])
+        self.assertEqual(analysis["normalized_choice"].to_list(), ["A", "B"])
+        self.assertEqual(analysis["gold_choice"].to_list(), ["A", "A"])
+        self.assertEqual(analysis["correct"].to_list(), [True, False])
+        self.assertEqual(analysis["valid"].to_list(), [True, True])
+
+    def test_analysis_table_keeps_invalid_choice_as_explicit_row(self) -> None:
+        item = build_item()
+        logs = pl.DataFrame(
+            [
+                build_log_record(
+                    item,
+                    prompt_order="reversed",
+                    raw_response="unparseable",
+                    parsed_verdict=None,
+                    correct=None,
+                )
+            ]
+        )
+
+        analysis = build_analysis_table(pl.DataFrame([item]), logs)
+
+        self.assertEqual(analysis.height, 1)
+        self.assertIsNone(analysis.item(0, "displayed_choice"))
+        self.assertIsNone(analysis.item(0, "normalized_choice"))
+        self.assertIsNone(analysis.item(0, "correct"))
+        self.assertFalse(analysis.item(0, "valid"))
+
+    def test_analysis_table_rejects_logged_correctness_that_disagrees_with_choice(self) -> None:
+        item = build_item()
+        logs = pl.DataFrame([build_log_record(item, parsed_verdict="B", correct=True)])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Judge log correctness is inconsistent with its normalized choice.*prompt_order=original",
+        ):
+            build_analysis_table(pl.DataFrame([item]), logs)
+
+    def test_artifact_rebuild_persists_both_orders_and_original_compatibility_matrix(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml")).model_copy(deep=True)
+        config.judges = [config.judges[0].model_copy(update={"id": "judge-a"})]
+        item = build_item()
+        items = pl.DataFrame([item])
+        logs = pl.DataFrame(
+            [
+                build_log_record(item, prompt_order="original", parsed_verdict="A", correct=True),
+                build_log_record(item, prompt_order="reversed", parsed_verdict="B", correct=False),
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config.data.output_dir = Path(temp_dir)
+            analysis, matrix = build_and_write_analysis_artifacts(config, items, logs)
+            persisted_analysis = pl.read_parquet(config.data.analysis_path)
+            persisted_matrix = pl.read_parquet(config.data.matrix_path)
+
+        self.assertEqual(analysis["prompt_order"].to_list(), ["original", "reversed"])
+        self.assertEqual(persisted_analysis["prompt_order"].to_list(), ["original", "reversed"])
+        self.assertEqual(matrix["judge-a"].to_list(), [1])
+        self.assertEqual(persisted_matrix["judge-a"].to_list(), [1])
 
     def test_distinguishes_same_item_id_across_splits_via_item_key(self) -> None:
         gpt_item = build_item()
@@ -629,6 +717,18 @@ class ValidateCoverageTests(unittest.TestCase):
             self.assertRaisesRegex(ValueError, r"judge-a/original \(0/1\)"),
         ):
             assert_complete_prompt_order_coverage(pl.DataFrame([current_item]), logs, [judge])
+
+    def test_rejects_invalid_original_choice_coverage_from_long_form_table(self) -> None:
+        item = build_item()
+        logs = pl.DataFrame([build_log_record(item, parsed_verdict=None, correct=None)])
+        analysis = build_analysis_table(pl.DataFrame([item]), logs)
+        judge = JudgeConfig(id="judge-a", model="model-a")
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"complete valid original-order choice coverage.*judge-a \(0/1\).*gpt:item-1",
+        ):
+            assert_complete_original_choice_coverage(analysis, [judge])
 
 
 class LoadOrPrepareItemsTests(unittest.TestCase):

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -11,6 +13,7 @@ from src.tracking import (
     cpu_name,
     inferred_accelerator,
     log_config,
+    log_data_artifacts,
     normalize_process_ru_maxrss_bytes,
     rank_order_string,
     resolved_pairwise_count,
@@ -47,6 +50,21 @@ class TrackingHelperTests(unittest.TestCase):
         self.assertIn("repeat_policy: reject", resolved_config)
         self.assertIn("prompt_orders:", resolved_config)
         self.assertIn("- reversed", resolved_config)
+
+    def test_log_data_artifacts_includes_canonical_analysis_table(self) -> None:
+        config = ExperimentConfig.from_yaml("configs/experiment.yaml").model_copy(deep=True)
+        mlflow = MagicMock()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config.data.output_dir = Path(temp_dir)
+            config.data.item_path.write_bytes(b"items")
+            config.data.analysis_path.write_bytes(b"analysis")
+            config.data.matrix_path.write_bytes(b"matrix")
+            with patch("src.tracking._mlflow", return_value=mlflow):
+                log_data_artifacts(config)
+
+        params = mlflow.log_params.call_args.args[0]
+        self.assertEqual(params["analysis_path"], str(config.data.analysis_path))
+        self.assertIn("analysis_sha256", params)
 
     def test_rank_order_string_uses_posterior_mean_order(self) -> None:
         posterior = {

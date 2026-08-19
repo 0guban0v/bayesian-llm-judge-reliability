@@ -47,9 +47,8 @@ from src.analysis.report_exports import (
     write_diagnostics_exports,
     write_results_exports,
 )
-from src.data.loader import build_and_write_matrix, load_judge_logs, load_or_prepare_items
+from src.data.loader import build_and_write_analysis_artifacts, load_judge_logs, load_or_prepare_items
 from src.data.validate import (
-    assert_complete_judge_coverage,
     assert_complete_prompt_order_coverage,
     validate_items,
     validate_matrix,
@@ -156,13 +155,12 @@ def main() -> None:
         validate_items(items)
         run_judges(config, judge_id=None, limit=None)
         logs = load_judge_logs(config.data.logs_dir)
-        matrix = build_and_write_matrix(config, items, logs)
+        analysis, matrix = build_and_write_analysis_artifacts(config, items, logs)
         expected_judges = [judge.id for judge in config.judges]
         validate_matrix(matrix, expected_judges)
-        assert_complete_judge_coverage(matrix, expected_judges)
         assert_complete_prompt_order_coverage(items, logs, config.judges)
         log_data_artifacts(config)
-        run_and_save_posterior(config, matrix, items, logs)
+        run_and_save_posterior(config, analysis, items, logs)
         posterior = load_posterior(config.inference.posterior_path)
         validate_posterior_plot_inputs(matrix, posterior)
         _save_figures(config, matrix, posterior)

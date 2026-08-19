@@ -106,6 +106,7 @@ class DataConfigTests(unittest.TestCase):
         config = DataConfig(source="judgebench", subset_size=1)
 
         self.assertEqual(config.repeat_policy, "reject")
+        self.assertEqual(config.analysis_path, Path("data/processed/judge_analysis.parquet"))
 
     def test_rejects_unknown_repeat_policy(self) -> None:
         with self.assertRaisesRegex(ValueError, "Input should be 'reject', 'first' or 'latest'"):
@@ -140,7 +141,7 @@ class JudgeConfigTests(unittest.TestCase):
     def test_prompt_orders_require_original_for_wide_matrix_compatibility(self) -> None:
         with self.assertRaisesRegex(
             ValueError,
-            "must include original while inference uses the wide correctness matrix",
+            "must include original while the current IRT model uses original-order judgments",
         ):
             JudgeConfig(id="judge-a", model="model-a", prompt_orders=["reversed"])
 

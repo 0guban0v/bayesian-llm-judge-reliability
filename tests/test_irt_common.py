@@ -1,4 +1,4 @@
-"""Regression tests for wide-to-long IRT observation loading."""
+"""Regression tests for order-level IRT observation loading."""
 
 from __future__ import annotations
 
@@ -10,34 +10,67 @@ import numpy as np
 import polars as pl
 from src.models.irt_common import (
     build_model_priors,
-    load_matrix_observations,
+    load_analysis_observations,
     summarize_item_parameters,
 )
 from src.models.irt_pymc import run_mcmc
 from src.schemas import ExperimentConfig, PriorConfig
 
 
-class LoadMatrixObservationsTests(unittest.TestCase):
+class LoadAnalysisObservationsTests(unittest.TestCase):
     """Verify Polars-based observation loading preserves indexing semantics."""
 
-    def test_load_matrix_observations_preserves_item_and_judge_order(self) -> None:
-        matrix = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1", "gpt:item-2", "claude:item-3"],
-                "item_id": ["item-1", "item-2", "item-3"],
-                "label": ["A>B", "B>A", "A>B"],
-                "original_id": [1, 2, 3],
-                "question": ["q1", "q2", "q3"],
-                "source": ["s1", "s2", "s3"],
-                "split": ["gpt", "gpt", "claude"],
-                "judge-a": [1, None, 0],
-                "judge-b": [0, 1, None],
-            }
-        )
+    def test_load_analysis_observations_uses_valid_original_rows_in_stable_order(self) -> None:
+        rows = [
+            ("gpt:item-1", "item-1", "s1", "gpt", "judge-a", "original", "A", "A", "A", True, True),
+            ("gpt:item-1", "item-1", "s1", "gpt", "judge-b", "original", "B", "B", "A", False, True),
+            ("gpt:item-1", "item-1", "s1", "gpt", "judge-a", "reversed", "A", "B", "A", False, True),
+            ("gpt:item-2", "item-2", "s2", "gpt", "judge-b", "original", "A", "A", "A", True, True),
+            ("gpt:item-2", "item-2", "s2", "gpt", "judge-a", "reversed", None, None, "A", None, False),
+            ("claude:item-3", "item-3", "s3", "claude", "judge-a", "original", "B", "B", "A", False, True),
+        ]
+        item_hashes = {
+            "gpt:item-1": f"{1:064x}",
+            "gpt:item-2": f"{2:064x}",
+            "claude:item-3": f"{3:064x}",
+        }
+        analysis = pl.DataFrame(
+            [
+                {
+                    "analysis_schema_version": 1,
+                    "item_key": item_key,
+                    "item_content_hash": item_hashes[item_key],
+                    "item_id": item_id,
+                    "source": source,
+                    "split": split,
+                    "judge_id": judge_id,
+                    "prompt_order": prompt_order,
+                    "repeat_index": 0,
+                    "displayed_choice": displayed_choice,
+                    "normalized_choice": normalized_choice,
+                    "gold_choice": gold_choice,
+                    "correct": correct,
+                    "valid": valid,
+                }
+                for (
+                    item_key,
+                    item_id,
+                    source,
+                    split,
+                    judge_id,
+                    prompt_order,
+                    displayed_choice,
+                    normalized_choice,
+                    gold_choice,
+                    correct,
+                    valid,
+                ) in rows
+            ]
+        ).with_columns(pl.col("analysis_schema_version").cast(pl.UInt16))
         with tempfile.TemporaryDirectory() as temp_dir:
-            matrix_path = Path(temp_dir) / "matrix.parquet"
-            matrix.write_parquet(matrix_path)
-            observations = load_matrix_observations(matrix_path)
+            analysis_path = Path(temp_dir) / "analysis.parquet"
+            analysis.write_parquet(analysis_path)
+            observations = load_analysis_observations(analysis_path)
 
         np.testing.assert_array_equal(observations["correct"], np.asarray([1, 0, 1, 0]))
         np.testing.assert_array_equal(observations["judge_idx"], np.asarray([0, 1, 1, 0]))

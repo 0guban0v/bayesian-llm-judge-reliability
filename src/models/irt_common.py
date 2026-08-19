@@ -10,7 +10,7 @@ import numpy as np
 import polars as pl
 
 from src.analysis.posterior_archive import POSTERIOR_SCHEMA_VERSION
-from src.data.matrix_semantics import ITEM_METADATA_COLUMNS
+from src.data.matrix_semantics import validate_analysis_table
 from src.schemas import IRTConfig
 
 
@@ -104,25 +104,48 @@ def aggregate_judge_accuracy_ppc(
     }
 
 
-def load_matrix_observations(matrix: pl.DataFrame | Path) -> dict[str, Any]:
-    """Convert a wide item-by-judge matrix into long-form IRT observations."""
+def load_analysis_observations(
+    analysis: pl.DataFrame | Path,
+    *,
+    judge_ids: list[str] | None = None,
+    item_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Load original-order observations from the canonical order-level table."""
 
-    prepared_matrix = pl.read_parquet(matrix) if isinstance(matrix, Path) else matrix
-    judge_ids = [column for column in prepared_matrix.columns if column not in ITEM_METADATA_COLUMNS]
-    item_ids = prepared_matrix.get_column("item_key").to_list()
-    source_ids = prepared_matrix.get_column("source").unique(maintain_order=True).to_list()
+    prepared_analysis = pl.read_parquet(analysis) if isinstance(analysis, Path) else analysis
+    validate_analysis_table(prepared_analysis)
+    active = prepared_analysis.filter(pl.col("prompt_order").eq("original") & pl.col("valid"))
+    if active.height == 0:
+        raise ValueError("Analysis table contains no valid original-order judgments for the current IRT model.")
+
+    observed_item_ids = active.get_column("item_key").unique(maintain_order=True).to_list()
+    observed_judge_ids = active.get_column("judge_id").unique(maintain_order=True).to_list()
+    ordered_item_ids = observed_item_ids if item_ids is None else item_ids
+    ordered_judge_ids = observed_judge_ids if judge_ids is None else judge_ids
+    if set(ordered_item_ids) != set(observed_item_ids):
+        raise ValueError("Configured item IDs do not match valid original-order analysis observations.")
+    if set(ordered_judge_ids) != set(observed_judge_ids):
+        raise ValueError("Configured judge IDs do not match valid original-order analysis observations.")
     item_lookup = pl.DataFrame(
         {
-            "item_key": item_ids,
-            "item_idx": np.arange(len(item_ids), dtype=np.int32),
-            "source": prepared_matrix.get_column("source"),
+            "item_key": ordered_item_ids,
+            "item_idx": np.arange(len(ordered_item_ids), dtype=np.int32),
         }
     )
     judge_lookup = pl.DataFrame(
         {
-            "judge_id": judge_ids,
-            "judge_idx": np.arange(len(judge_ids), dtype=np.int32),
+            "judge_id": ordered_judge_ids,
+            "judge_idx": np.arange(len(ordered_judge_ids), dtype=np.int32),
         }
+    )
+    source_ids = (
+        active.select(["item_key", "source"])
+        .unique()
+        .join(item_lookup, on="item_key", how="left")
+        .sort("item_idx")
+        .get_column("source")
+        .unique(maintain_order=True)
+        .to_list()
     )
     source_lookup = pl.DataFrame(
         {
@@ -131,14 +154,7 @@ def load_matrix_observations(matrix: pl.DataFrame | Path) -> dict[str, Any]:
         }
     )
     observations = (
-        prepared_matrix.select(["item_key", *judge_ids])
-        .unpivot(
-            on=judge_ids,
-            index="item_key",
-            variable_name="judge_id",
-            value_name="correct",
-        )
-        .drop_nulls("correct")
+        active.select(["item_key", "source", "judge_id", "correct"])
         .join(item_lookup, on="item_key", how="left")
         .join(judge_lookup, on="judge_id", how="left")
         .join(source_lookup, on="source", how="left")
@@ -149,11 +165,11 @@ def load_matrix_observations(matrix: pl.DataFrame | Path) -> dict[str, Any]:
         "judge_idx": observations.get_column("judge_idx").to_numpy(),
         "item_idx": observations.get_column("item_idx").to_numpy(),
         "source_idx": observations.get_column("source_idx").to_numpy(),
-        "n_judges": len(judge_ids),
-        "n_items": len(item_ids),
+        "n_judges": len(ordered_judge_ids),
+        "n_items": len(ordered_item_ids),
         "n_sources": len(source_ids),
-        "judge_ids": np.asarray(judge_ids, dtype=str),
-        "item_ids": np.asarray(item_ids, dtype=str),
+        "judge_ids": np.asarray(ordered_judge_ids, dtype=str),
+        "item_ids": np.asarray(ordered_item_ids, dtype=str),
         "source_ids": np.asarray(source_ids, dtype=str),
     }
 

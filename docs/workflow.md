@@ -26,7 +26,9 @@ make full
 
 `make judge` resumes from existing judge logs by skipping already recorded `(item_key, item_content_hash, prompt_order, repeat_index)` tasks. Each judge's `prompt_orders` policy declares which candidate orders to collect; production configs request both `original` and `reversed`. New JSONL records embed the prompt protocol and judge metadata needed for resumable runs. Those JSONL records are treated as a closed-world on-disk contract: unexpected extra fields are rejected rather than silently tolerated. The retired boolean `reverse_order` scheduling field is the sole compatibility exception and is removed in memory, because every compatible record already persists its actual `prompt_order`. Older logs missing current identity or protocol fields remain unsupported. `make matrix`, `make validate`, `make infer`, `make diagnostics`, and `make plots` rebuild derived artifacts from current logs and should be run only after all intended judges finish.
 
-`make infer` fails fast on incomplete judge coverage. If any configured judge column is missing or partially observed, or any configured item-judge-order-repeat task is absent from current content-matched logs, inference exits with a coverage error instead of fitting a posterior on incomplete data. The current wide matrix remains an original-order compatibility artifact until the long-form analysis migration.
+`make matrix` writes the versioned long-form `judge_analysis.parquet` as the canonical analysis artifact. It retains one resolved row per item, judge, and prompt order, with displayed and original-order-normalized choices, gold choice, correctness, and an explicit validity flag. The wide `judge_matrix.parquet` is derived from valid original-order rows and remains available as a compatibility export for plots and reports.
+
+`make infer` fails fast on incomplete judge coverage. If any configured judge column is missing or partially observed, any configured item-judge-order-repeat task is absent from current content-matched logs, or the long-form artifact is stale or incompatible, inference exits with a coverage or schema error instead of fitting a posterior on incomplete data. The current IRT likelihood reads the long-form table but uses valid original-order rows until the order-aware model is introduced.
 
 `make diagnostics` writes `figures/diagnostics_summary.png`.
 
@@ -50,7 +52,7 @@ make tracked-analysis CONFIG=configs/experiment_gpt_global.yaml
 ```
 
 `tracked-analysis` is the tracked equivalent of the full pipeline. It samples or reloads items for the requested
-config, resumes judge collection against those items, rebuilds the matrix from the resulting logs, runs inference,
+config, resumes judge collection against those items, rebuilds the long-form table and compatibility matrix from the resulting logs, runs inference,
 and logs outputs to MLflow.
 
 Run the baseline plus all four study configs sequentially:
@@ -65,7 +67,7 @@ commands. They should be treated as experiment executions, not lightweight repor
 Tracked runs use local MLflow tracking with SQLite metadata in `mlflow.db` and file artifacts in `mlruns/`, and log:
 
 - resolved config snapshot
-- item and matrix hashes
+- item, long-form analysis-table, and compatibility-matrix hashes
 - posterior artifacts
 - figures
 - generated report snippets

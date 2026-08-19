@@ -14,6 +14,7 @@ data:
   raw_dir: data/raw/studies/claude_global
   logs_dir: data/logs
   item_file: judgebench_items.parquet
+  analysis_file: judge_analysis.parquet
   matrix_file: judge_matrix.parquet
   repeat_policy: reject
 
