@@ -184,6 +184,43 @@ class PyMCModelTests(unittest.TestCase):
 
         run_mcmc_mock.assert_not_called()
 
+    def test_run_and_save_posterior_rejects_incomplete_prompt_order_coverage(self) -> None:
+        config = self._make_config()
+        config.judges = [
+            config.judges[0].model_copy(update={"id": "judge-a"}),
+            config.judges[1].model_copy(update={"id": "judge-b"}),
+        ]
+        matrix = pl.DataFrame(
+            {
+                "item_key": ["gpt:item-1"],
+                "item_id": ["item-1"],
+                "label": ["A>B"],
+                "original_id": [1],
+                "question": ["q1"],
+                "source": ["source-a"],
+                "split": ["gpt"],
+                "judge-a": [1],
+                "judge-b": [0],
+            }
+        )
+        items = MagicMock(name="items")
+        logs = MagicMock(name="logs")
+
+        with (
+            patch("src.models.infer.validate_items") as validate_items,
+            patch(
+                "src.models.infer.assert_complete_prompt_order_coverage",
+                side_effect=ValueError("Inference requires complete prompt-order coverage"),
+            ) as coverage_guard,
+            patch("src.models.infer.run_mcmc") as run_mcmc_mock,
+        ):
+            with self.assertRaisesRegex(ValueError, "complete prompt-order coverage"):
+                run_and_save_posterior(config, matrix, items, logs)
+
+        validate_items.assert_called_once_with(items)
+        coverage_guard.assert_called_once_with(items, logs, config.judges)
+        run_mcmc_mock.assert_not_called()
+
     def test_saved_archive_round_trips_with_expected_metadata(self) -> None:
         config = self._make_config()
         observations = self._make_observations()

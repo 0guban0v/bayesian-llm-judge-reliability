@@ -242,8 +242,10 @@ def load_judge_logs(logs_dir: Path) -> pl.DataFrame:
                         "repeat indices. Delete it and re-run judges with the current pipeline."
                     )
                 try:
-                    parsed_record = JudgeResult.model_validate(record)
-                except ValidationError as exc:
+                    parsed_record = JudgeResult.from_persisted_record(record)
+                except (ValidationError, ValueError) as exc:
+                    if not isinstance(exc, ValidationError):
+                        raise ValueError(f"Judge log {log_path} is malformed at line {line_number}: {exc}.") from exc
                     first_error = exc.errors()[0]
                     field = ".".join(str(part) for part in first_error["loc"])
                     raise ValueError(
@@ -326,14 +328,15 @@ def build_binary_matrix(
 def build_and_write_matrix(
     config: ExperimentConfig,
     items: pl.DataFrame | None = None,
+    logs: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Build and persist the judge matrix parquet."""
 
     prepared_items = items if items is not None else load_or_prepare_items(config)
-    logs = load_judge_logs(config.data.logs_dir)
+    prepared_logs = logs if logs is not None else load_judge_logs(config.data.logs_dir)
     matrix = build_binary_matrix(
         prepared_items,
-        logs,
+        prepared_logs,
         [judge.id for judge in config.judges],
         repeat_policy=config.data.repeat_policy,
     )

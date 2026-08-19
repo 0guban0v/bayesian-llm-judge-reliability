@@ -105,7 +105,7 @@ flowchart TB
 - `data/logs/*.jsonl` are the canonical run records.
   What: append-only judge outputs with item metadata and parsed verdicts.
   Why: matrix, validation, and posterior artifacts can be rebuilt from logs without trusting in-memory run state.
-  Current contract: each JSONL record now embeds prompt protocol and judge metadata, and references sampled items via split-qualified `item_key`. Logs that predate embedded metadata or split-qualified keys are unsupported.
+  Current contract: each JSONL record embeds prompt protocol and judge metadata, references sampled items via split-qualified `item_key` plus `item_content_hash`, and identifies its configured `prompt_order` plus `repeat_index`. Logs that predate the current closed-world schema are unsupported.
 
 - `src/judges/mlx_backend.py` implements constrained verdict-only decoding.
   What: assistant-side prefill plus a logits processor that allows only a verdict token and EOS.
@@ -118,10 +118,10 @@ flowchart TB
 - `src/judges/runner.py` executes judges sequentially and clears MLX model cache between judges.
   What: one-process orchestration with explicit cache cleanup after each judge.
   Why: local MLX / Metal memory behavior made multi-model lifecycle management part of the architecture.
-  Current contract: embedded log metadata includes prompt protocol version, so protocol changes invalidate old logs instead of silently reusing them.
+  Current contract: embedded log metadata includes prompt protocol version, so protocol changes invalidate old logs instead of silently reusing them. Scheduling policies such as `prompt_orders` and `num_repeats` are excluded from compatibility metadata because each task is resumed independently by its persisted order and repeat index.
 
 - Judge execution is resumable at the log layer.
-  What: runner skips already logged `(item_key, prompt_order)` pairs when appending to a judge JSONL.
+  What: runner skips already logged `(item_key, item_content_hash, prompt_order, repeat_index)` tasks when appending to a judge JSONL.
   Why: interrupted judge runs can continue safely, but downstream artifacts are only meaningful once intended judge coverage is complete.
 
 - Posterior analysis now requires current schema archives.

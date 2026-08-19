@@ -188,7 +188,6 @@ class LogMetadataTests(unittest.TestCase):
             "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
             "max_tokens": 8,
             "trust_remote_code": False,
-            "reverse_order": False,
             "raw_response": "FINAL VERDICT: A",
             "parsed_verdict": "A",
             "correct": True,
@@ -206,6 +205,7 @@ class LogMetadataTests(unittest.TestCase):
         self.assertEqual(metadata_fields["prompt_variant"], FIXED_PROMPT_VARIANT)
         self.assertEqual(metadata_fields["prompt_protocol_version"], PROMPT_PROTOCOL_VERSION)
         self.assertNotIn("num_repeats", metadata_fields)
+        self.assertNotIn("prompt_orders", metadata_fields)
 
     def test_validate_log_metadata_rejects_legacy_log_without_embedded_metadata(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
@@ -277,6 +277,17 @@ class LogMetadataTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "predates explicit repeat indices"):
                 validate_log_metadata(log_path, judge)
 
+    def test_validate_log_metadata_accepts_compatible_legacy_reverse_order_field(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        record = self.build_log_record(judge.id, reverse_order=False, **judge_metadata_fields(judge))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            validate_log_metadata(log_path, judge)
+
     def test_validate_log_metadata_rejects_invalid_prompt_order_value(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
         judge = config.judges[0]
@@ -333,7 +344,7 @@ class LogMetadataTests(unittest.TestCase):
 
     def test_run_judge_reprocesses_item_when_content_hash_changes(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
-        judge = config.judges[0]
+        judge = config.judges[0].model_copy(update={"prompt_orders": ["original"]})
         old_item = build_item()
         changed_item = build_item(question="changed question")
         old_record = self.build_log_record(
@@ -363,7 +374,7 @@ class LogMetadataTests(unittest.TestCase):
 
     def test_run_judge_schedules_and_resumes_each_repeat_index(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
-        judge = config.judges[0].model_copy(update={"num_repeats": 3})
+        judge = config.judges[0].model_copy(update={"num_repeats": 3, "prompt_orders": ["original"]})
         item = build_item()
         existing_record = self.build_log_record(
             judge.id,
@@ -394,6 +405,35 @@ class LogMetadataTests(unittest.TestCase):
 
         self.assertEqual(completed, 2)
         self.assertEqual([record["repeat_index"] for record in records], [0, 1, 2])
+
+    def test_run_judge_schedules_and_resumes_each_prompt_order(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        item = build_item()
+        existing_record = self.build_log_record(
+            judge.id,
+            item_content_hash=item["item_content_hash"],
+            prompt_order="original",
+            reverse_order=False,
+            **judge_metadata_fields(judge),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            config = config.model_copy(update={"data": config.data.model_copy(update={"logs_dir": logs_dir})})
+            log_path = logs_dir / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(existing_record) + "\n", encoding="utf-8")
+
+            with (
+                patch("src.judges.runner.generate_text", return_value="FINAL VERDICT: A"),
+                patch("src.judges.runner.time.perf_counter", side_effect=[0.0, 0.01]),
+            ):
+                completed = run_judge(config, judge, [item])
+
+            records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(completed, 1)
+        self.assertEqual([record["prompt_order"] for record in records], ["original", "reversed"])
 
 
 if __name__ == "__main__":

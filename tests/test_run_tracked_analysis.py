@@ -18,6 +18,7 @@ class RunTrackedAnalysisTests(unittest.TestCase):
 
     def test_single_run_tracked_analysis_does_not_emit_cross_study_model_comparison_artifact(self) -> None:
         items = MagicMock(name="items")
+        logs = MagicMock(name="logs")
         matrix = MagicMock(name="matrix")
         posterior = {
             "judge_ids": np.asarray(["judge-a", "judge-b"]),
@@ -42,9 +43,11 @@ class RunTrackedAnalysisTests(unittest.TestCase):
             stack.enter_context(patch.object(run_tracked_analysis, "load_or_prepare_items", return_value=items))
             stack.enter_context(patch.object(run_tracked_analysis, "validate_items"))
             stack.enter_context(patch.object(run_tracked_analysis, "run_judges"))
+            stack.enter_context(patch.object(run_tracked_analysis, "load_judge_logs", return_value=logs))
             stack.enter_context(patch.object(run_tracked_analysis, "build_and_write_matrix", return_value=matrix))
             stack.enter_context(patch.object(run_tracked_analysis, "validate_matrix"))
             stack.enter_context(patch.object(run_tracked_analysis, "assert_complete_judge_coverage"))
+            stack.enter_context(patch.object(run_tracked_analysis, "assert_complete_prompt_order_coverage"))
             stack.enter_context(patch.object(run_tracked_analysis, "log_data_artifacts"))
             stack.enter_context(patch.object(run_tracked_analysis, "run_and_save_posterior"))
             stack.enter_context(patch.object(run_tracked_analysis, "load_posterior", return_value=posterior))
@@ -64,6 +67,7 @@ class RunTrackedAnalysisTests(unittest.TestCase):
     def test_refresh_items_rebuilds_matrix_from_refreshed_items(self) -> None:
         config = ExperimentConfig.from_yaml("configs/experiment_gpt_global.yaml")
         items = MagicMock(name="items")
+        logs = MagicMock(name="logs")
         matrix = MagicMock(name="matrix")
         posterior = {
             "judge_ids": np.asarray(["judge-a", "judge-b"]),
@@ -92,12 +96,16 @@ class RunTrackedAnalysisTests(unittest.TestCase):
             )
             validate_items = stack.enter_context(patch.object(run_tracked_analysis, "validate_items"))
             run_judges = stack.enter_context(patch.object(run_tracked_analysis, "run_judges"))
+            load_logs = stack.enter_context(patch.object(run_tracked_analysis, "load_judge_logs", return_value=logs))
             build_matrix = stack.enter_context(
                 patch.object(run_tracked_analysis, "build_and_write_matrix", return_value=matrix)
             )
             validate_matrix = stack.enter_context(patch.object(run_tracked_analysis, "validate_matrix"))
             assert_complete_judge_coverage = stack.enter_context(
                 patch.object(run_tracked_analysis, "assert_complete_judge_coverage")
+            )
+            assert_complete_prompt_order_coverage = stack.enter_context(
+                patch.object(run_tracked_analysis, "assert_complete_prompt_order_coverage")
             )
             stack.enter_context(patch.object(run_tracked_analysis, "log_data_artifacts"))
             stack.enter_context(patch.object(run_tracked_analysis, "run_and_save_posterior"))
@@ -115,16 +123,19 @@ class RunTrackedAnalysisTests(unittest.TestCase):
         load_items.assert_called_once_with(config, refresh=True)
         validate_items.assert_called_once_with(items)
         run_judges.assert_called_once_with(config, judge_id=None, limit=None)
-        build_matrix.assert_called_once_with(config, items)
+        load_logs.assert_called_once_with(config.data.logs_dir)
+        build_matrix.assert_called_once_with(config, items, logs)
         expected_judges = [judge.id for judge in config.judges]
         validate_matrix.assert_called_once_with(matrix, expected_judges)
         assert_complete_judge_coverage.assert_called_once_with(matrix, expected_judges)
+        assert_complete_prompt_order_coverage.assert_called_once_with(items, logs, config.judges)
         logged_paths = [call.args[0].name for call in log_artifact.call_args_list]
         self.assertIn("judge_reliability_by_source.png", logged_paths)
         self.assertNotIn("model_comparison.tex", logged_paths)
 
     def test_non_source_posterior_does_not_log_source_reliability_figure(self) -> None:
         items = MagicMock(name="items")
+        logs = MagicMock(name="logs")
         matrix = MagicMock(name="matrix")
         posterior = {
             "judge_ids": np.asarray(["judge-a", "judge-b"]),
@@ -149,9 +160,11 @@ class RunTrackedAnalysisTests(unittest.TestCase):
             stack.enter_context(patch.object(run_tracked_analysis, "load_or_prepare_items", return_value=items))
             stack.enter_context(patch.object(run_tracked_analysis, "validate_items"))
             stack.enter_context(patch.object(run_tracked_analysis, "run_judges"))
+            stack.enter_context(patch.object(run_tracked_analysis, "load_judge_logs", return_value=logs))
             stack.enter_context(patch.object(run_tracked_analysis, "build_and_write_matrix", return_value=matrix))
             stack.enter_context(patch.object(run_tracked_analysis, "validate_matrix"))
             stack.enter_context(patch.object(run_tracked_analysis, "assert_complete_judge_coverage"))
+            stack.enter_context(patch.object(run_tracked_analysis, "assert_complete_prompt_order_coverage"))
             stack.enter_context(patch.object(run_tracked_analysis, "log_data_artifacts"))
             stack.enter_context(patch.object(run_tracked_analysis, "run_and_save_posterior"))
             stack.enter_context(patch.object(run_tracked_analysis, "load_posterior", return_value=posterior))

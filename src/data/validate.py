@@ -8,13 +8,20 @@ from pathlib import Path
 
 import polars as pl
 
-from src.data.loader import build_and_write_matrix, load_or_prepare_items, validate_item_content_hashes
+from src.data.loader import (
+    build_and_write_matrix,
+    load_judge_logs,
+    load_or_prepare_items,
+    select_current_item_logs,
+    validate_item_content_hashes,
+)
 from src.data.matrix_semantics import judge_columns as shared_judge_columns
 from src.data.matrix_semantics import summarize_matrix as shared_summarize_matrix
 from src.logging_utils import configure_logging, format_table_for_log
-from src.schemas import ExperimentConfig
+from src.schemas import ExperimentConfig, JudgeConfig
 
 logger = logging.getLogger(__name__)
+PROMPT_ORDER_COVERAGE_SAMPLE_SIZE = 5
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,6 +83,66 @@ def assert_complete_judge_coverage(matrix: pl.DataFrame, expected_judges: list[s
     )
 
 
+def assert_complete_prompt_order_coverage(
+    items: pl.DataFrame,
+    logs: pl.DataFrame,
+    judges: list[JudgeConfig],
+) -> None:
+    """Require every configured item, judge, order, and repeat task to be logged."""
+
+    expected_rows = [
+        {
+            "item_key": item["item_key"],
+            "item_content_hash": item["item_content_hash"],
+            "judge_id": judge.id,
+            "prompt_order": prompt_order,
+            "repeat_index": repeat_index,
+        }
+        for item in items.select(["item_key", "item_content_hash"]).iter_rows(named=True)
+        for judge in judges
+        for prompt_order in judge.prompt_orders
+        for repeat_index in range(judge.num_repeats)
+    ]
+    expected = pl.DataFrame(
+        expected_rows,
+        schema={
+            "item_key": pl.String,
+            "item_content_hash": pl.String,
+            "judge_id": pl.String,
+            "prompt_order": pl.String,
+            "repeat_index": pl.Int64,
+        },
+    )
+    if expected.height == 0:
+        return
+
+    task_columns = expected.columns
+    current_logs = select_current_item_logs(items, logs)
+    completed = current_logs.select(task_columns).unique(maintain_order=True)
+    missing = expected.join(completed, on=task_columns, how="anti")
+    if missing.height == 0:
+        return
+
+    expected_counts = expected.group_by(["judge_id", "prompt_order"], maintain_order=True).len(name="expected")
+    missing_counts = missing.group_by(["judge_id", "prompt_order"], maintain_order=True).len(name="missing")
+    incomplete = expected_counts.join(missing_counts, on=["judge_id", "prompt_order"], how="inner").with_columns(
+        (pl.col("expected") - pl.col("missing")).alias("completed")
+    )
+    details = ", ".join(
+        f"{row['judge_id']}/{row['prompt_order']} ({row['completed']}/{row['expected']})"
+        for row in incomplete.iter_rows(named=True)
+    )
+    sample = ", ".join(
+        f"item_key={row['item_key']} judge_id={row['judge_id']} prompt_order={row['prompt_order']} "
+        f"repeat_index={row['repeat_index']}"
+        for row in missing.head(PROMPT_ORDER_COVERAGE_SAMPLE_SIZE).iter_rows(named=True)
+    )
+    raise ValueError(
+        "Inference requires complete prompt-order coverage for all configured judge tasks. "
+        f"Incomplete judge orders: {details}. Missing task sample: {sample}"
+    )
+
+
 def main() -> None:
     """CLI entrypoint for validation."""
 
@@ -84,12 +151,14 @@ def main() -> None:
     config = ExperimentConfig.from_yaml(args.config)
     items = load_or_prepare_items(config)
     validate_items(items)
-    matrix = build_and_write_matrix(config, items)
+    logs = load_judge_logs(config.data.logs_dir)
+    matrix = build_and_write_matrix(config, items, logs)
     validate_matrix(matrix, [judge.id for judge in config.judges])
     summary = summarize_matrix(matrix)
     logger.info("items_ok")
     try:
         assert_complete_judge_coverage(matrix, [judge.id for judge in config.judges])
+        assert_complete_prompt_order_coverage(items, logs, config.judges)
     except ValueError as exc:
         logger.warning("inference_ready=false reason=%s", exc)
     else:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date, datetime
 from pathlib import Path
 from typing import Literal
@@ -12,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from src.data.item_identity import ITEM_CONTENT_HASH_PATTERN
 
 RepeatPolicy = Literal["reject", "first", "latest"]
+PromptOrder = Literal["original", "reversed"]
 
 
 class StrictConfigModel(BaseModel):
@@ -65,7 +67,19 @@ class JudgeConfig(StrictConfigModel):
     max_tokens: int = Field(gt=0, default=256)
     num_repeats: int = Field(ge=1, default=1)
     trust_remote_code: bool = False
-    reverse_order: bool = False
+    prompt_orders: list[PromptOrder] = Field(default_factory=lambda: ["original"])
+
+    @model_validator(mode="after")
+    def ensure_distinct_prompt_orders(self) -> JudgeConfig:
+        """Require at least one prompt order without ambiguous duplicate tasks."""
+
+        if not self.prompt_orders:
+            raise ValueError("At least one prompt order must be configured.")
+        if len(self.prompt_orders) != len(set(self.prompt_orders)):
+            raise ValueError("Prompt orders must be unique.")
+        if "original" not in self.prompt_orders:
+            raise ValueError("Prompt orders must include original while inference uses the wide correctness matrix.")
+        return self
 
 
 class PriorConfig(StrictConfigModel):
@@ -253,12 +267,11 @@ class JudgeResult(StrictConfigModel):
     ground_truth_label: Literal["A>B", "B>A"]
     prompt_variant: str
     prompt_protocol_version: str
-    prompt_order: Literal["original", "reversed"]
+    prompt_order: PromptOrder
     repeat_index: int = Field(ge=0)
     model: str
     max_tokens: int = Field(gt=0)
     trust_remote_code: bool = False
-    reverse_order: bool = False
     raw_response: str
     parsed_verdict: Literal["A", "B"] | None
     correct: bool | None
@@ -270,6 +283,17 @@ class JudgeResult(StrictConfigModel):
         payload = self.model_dump()
         payload["timestamp"] = self.timestamp.isoformat()
         return payload
+
+    @classmethod
+    def from_persisted_record(cls, record: Mapping[str, object]) -> JudgeResult:
+        """Validate a log row after removing the compatible legacy scheduling flag."""
+
+        payload = dict(record)
+        if "reverse_order" in payload:
+            legacy_reverse_order = payload.pop("reverse_order")
+            if not isinstance(legacy_reverse_order, bool):
+                raise ValueError("reverse_order must be a boolean in legacy judge logs")
+        return cls.model_validate(payload)
 
 
 def unique_model_requests(judges: list[JudgeConfig]) -> list[tuple[str, bool]]:

@@ -9,7 +9,8 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from src.data.validate import assert_complete_judge_coverage
+from src.data.loader import load_judge_logs
+from src.data.validate import assert_complete_judge_coverage, assert_complete_prompt_order_coverage, validate_items
 from src.logging_utils import configure_logging, format_table_for_log
 from src.models.irt_common import load_matrix_observations, save_posterior, summarize_item_parameters, summarize_judges
 from src.models.irt_pymc import run_mcmc
@@ -26,12 +27,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_and_save_posterior(config: ExperimentConfig, matrix: pl.DataFrame | None = None) -> None:
+def run_and_save_posterior(
+    config: ExperimentConfig,
+    matrix: pl.DataFrame | None = None,
+    items: pl.DataFrame | None = None,
+    logs: pl.DataFrame | None = None,
+) -> None:
     """Run inference and persist posterior samples."""
 
     config.ensure_directories()
     prepared_matrix = matrix if matrix is not None else pl.read_parquet(config.data.matrix_path)
     assert_complete_judge_coverage(prepared_matrix, [judge.id for judge in config.judges])
+    prepared_items = items if items is not None else pl.read_parquet(config.data.item_path)
+    validate_items(prepared_items)
+    prepared_logs = logs if logs is not None else load_judge_logs(config.data.logs_dir)
+    assert_complete_prompt_order_coverage(prepared_items, prepared_logs, config.judges)
     observations = load_matrix_observations(prepared_matrix)
     idata, samples, ppc_summary = run_mcmc(config, observations)
     output_path = config.inference.posterior_path
