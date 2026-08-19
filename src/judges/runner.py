@@ -71,6 +71,11 @@ def validate_log_metadata(log_path: Path, judge: JudgeConfig) -> None:
                     f"Judge '{judge.id}' log is unsupported because it predates split-qualified item keys. "
                     f"Delete {log_path} and re-run with the current prompt protocol."
                 )
+            if "item_content_hash" not in record:
+                raise ValueError(
+                    f"Judge '{judge.id}' log is unsupported because it predates item content hashes. "
+                    f"Delete {log_path} and re-run with the current item content."
+                )
             if "repeat_index" not in record:
                 raise ValueError(
                     f"Judge '{judge.id}' log is unsupported because it predates explicit repeat indices. "
@@ -117,6 +122,11 @@ def load_processed_keys(log_path: Path) -> set[tuple[str, str, str, int]]:
                 raise ValueError(
                     f"Judge log {log_path} is unsupported because it predates split-qualified item keys. "
                     "Delete it and re-run with the current prompt protocol."
+                )
+            if "item_content_hash" not in record:
+                raise ValueError(
+                    f"Judge log {log_path} is unsupported because it predates item content hashes. "
+                    "Delete it and re-run with the current item content."
                 )
             try:
                 parsed_record = JudgeResult.from_persisted_record(record)

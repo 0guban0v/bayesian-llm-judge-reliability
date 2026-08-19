@@ -277,6 +277,19 @@ class LogMetadataTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "predates explicit repeat indices"):
                 validate_log_metadata(log_path, judge)
 
+    def test_validate_log_metadata_rejects_legacy_log_without_item_content_hash(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        record = self.build_log_record(judge.id, **judge_metadata_fields(judge))
+        del record["item_content_hash"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "predates item content hashes"):
+                validate_log_metadata(log_path, judge)
+
     def test_validate_log_metadata_accepts_compatible_legacy_reverse_order_field(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
         judge = config.judges[0]
@@ -326,6 +339,19 @@ class LogMetadataTests(unittest.TestCase):
             log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, r"Judge log .* is malformed at line 1"):
+                load_processed_keys(log_path)
+
+    def test_load_processed_keys_rejects_legacy_log_without_item_content_hash(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        record = self.build_log_record(judge.id, **judge_metadata_fields(judge))
+        del record["item_content_hash"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "predates item content hashes"):
                 load_processed_keys(log_path)
 
     def test_load_processed_keys_qualifies_item_by_content_hash(self) -> None:
