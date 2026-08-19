@@ -31,7 +31,7 @@ class TrackingHelperTests(unittest.TestCase):
             "bayesian-llm-judge-reliability-gpt-source-hier-gpt-2PL-source_hier",
         )
 
-    def test_log_config_records_repeat_policy(self) -> None:
+    def test_log_config_records_data_collection_policies(self) -> None:
         config = ExperimentConfig.from_yaml("configs/experiment.yaml")
         mlflow = MagicMock()
 
@@ -45,6 +45,8 @@ class TrackingHelperTests(unittest.TestCase):
         self.assertEqual(logged_params["repeat_policy"], "reject")
         resolved_config = mlflow.log_text.call_args.args[0]
         self.assertIn("repeat_policy: reject", resolved_config)
+        self.assertIn("prompt_orders:", resolved_config)
+        self.assertIn("- reversed", resolved_config)
 
     def test_rank_order_string_uses_posterior_mean_order(self) -> None:
         posterior = {

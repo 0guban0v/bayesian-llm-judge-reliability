@@ -19,9 +19,9 @@ from src.data.loader import (
     load_judge_logs,
     load_or_prepare_items,
 )
-from src.data.validate import assert_complete_judge_coverage, validate_items
+from src.data.validate import assert_complete_judge_coverage, assert_complete_prompt_order_coverage, validate_items
 from src.judges.prompts import FIXED_PROMPT_VARIANT, PROMPT_PROTOCOL_VERSION
-from src.schemas import ExperimentConfig
+from src.schemas import ExperimentConfig, JudgeConfig
 
 
 def build_item(
@@ -73,7 +73,6 @@ def build_log_record(item: dict[str, object], **overrides: object) -> dict[str, 
         "model": "model-a",
         "max_tokens": 8,
         "trust_remote_code": False,
-        "reverse_order": False,
         "raw_response": "FINAL VERDICT: A",
         "parsed_verdict": "A",
         "correct": True,
@@ -400,6 +399,31 @@ class LoadJudgeLogsTests(unittest.TestCase):
 
         self.assertEqual(logs["repeat_index"].to_list(), [0, 2])
 
+    def test_migrates_compatible_legacy_reverse_order_field(self) -> None:
+        item = build_item()
+        record = build_log_record(item, reverse_order=False)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            log_path = logs_dir / "judge-a.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            logs = load_judge_logs(logs_dir)
+
+        self.assertNotIn("reverse_order", logs.columns)
+
+    def test_rejects_malformed_legacy_reverse_order_field(self) -> None:
+        item = build_item()
+        record = build_log_record(item, reverse_order="sometimes")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            log_path = logs_dir / "judge-a.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "reverse_order must be a boolean"):
+                load_judge_logs(logs_dir)
+
 
 class CategoryMatcherTests(unittest.TestCase):
     """Verify category matching uses token sequences rather than substrings."""
@@ -477,7 +501,7 @@ class ValidateItemsTests(unittest.TestCase):
 
 
 class ValidateCoverageTests(unittest.TestCase):
-    """Verify inference coverage guard rejects partial judge matrices."""
+    """Verify inference coverage guards reject partial judge tasks."""
 
     def test_accepts_complete_judge_coverage(self) -> None:
         matrix = pl.DataFrame(
@@ -516,6 +540,95 @@ class ValidateCoverageTests(unittest.TestCase):
             r"Inference requires complete judge coverage.*judge-a \(1/2\)",
         ):
             assert_complete_judge_coverage(matrix, ["judge-a", "judge-b"])
+
+    def test_accepts_complete_prompt_order_coverage(self) -> None:
+        items = pl.DataFrame(
+            [
+                build_item(),
+                build_item(item_key="claude:item-2", item_id="item-2", split="claude", original_id=2),
+            ]
+        )
+        logs = pl.DataFrame(
+            [
+                {
+                    "item_key": item["item_key"],
+                    "item_content_hash": item["item_content_hash"],
+                    "judge_id": "judge-a",
+                    "prompt_order": prompt_order,
+                    "repeat_index": 0,
+                }
+                for item in items.iter_rows(named=True)
+                for prompt_order in ("original", "reversed")
+            ]
+        )
+        judge = JudgeConfig(
+            id="judge-a",
+            model="model-a",
+            prompt_orders=["original", "reversed"],
+        )
+
+        assert_complete_prompt_order_coverage(items, logs, [judge])
+
+    def test_rejects_incomplete_prompt_order_coverage(self) -> None:
+        first_item = build_item()
+        second_item = build_item(item_key="claude:item-2", item_id="item-2", split="claude", original_id=2)
+        items = pl.DataFrame([first_item, second_item])
+        logs = pl.DataFrame(
+            [
+                {
+                    "item_key": first_item["item_key"],
+                    "item_content_hash": first_item["item_content_hash"],
+                    "judge_id": "judge-a",
+                    "prompt_order": "original",
+                    "repeat_index": 0,
+                },
+                {
+                    "item_key": first_item["item_key"],
+                    "item_content_hash": first_item["item_content_hash"],
+                    "judge_id": "judge-a",
+                    "prompt_order": "reversed",
+                    "repeat_index": 0,
+                },
+                {
+                    "item_key": second_item["item_key"],
+                    "item_content_hash": second_item["item_content_hash"],
+                    "judge_id": "judge-a",
+                    "prompt_order": "original",
+                    "repeat_index": 0,
+                },
+            ]
+        )
+        judge = JudgeConfig(
+            id="judge-a",
+            model="model-a",
+            prompt_orders=["original", "reversed"],
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"complete prompt-order coverage.*judge-a/reversed \(1/2\).*claude:item-2",
+        ):
+            assert_complete_prompt_order_coverage(items, logs, [judge])
+
+    def test_prompt_order_coverage_excludes_stale_item_content(self) -> None:
+        old_item = build_item()
+        current_item = build_item(question="changed question")
+        logs = pl.DataFrame(
+            {
+                "item_key": [old_item["item_key"]],
+                "item_content_hash": [old_item["item_content_hash"]],
+                "judge_id": ["judge-a"],
+                "prompt_order": ["original"],
+                "repeat_index": [0],
+            }
+        )
+        judge = JudgeConfig(id="judge-a", model="model-a")
+
+        with (
+            self.assertLogs("src.data.loader", level="WARNING"),
+            self.assertRaisesRegex(ValueError, r"judge-a/original \(0/1\)"),
+        ):
+            assert_complete_prompt_order_coverage(pl.DataFrame([current_item]), logs, [judge])
 
 
 class LoadOrPrepareItemsTests(unittest.TestCase):

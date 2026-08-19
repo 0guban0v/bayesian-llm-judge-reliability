@@ -17,7 +17,7 @@ from src.judges.mlx_backend import clear_model_cache, generate_text
 from src.judges.parsers import parse_correctness, parse_verdict, swap_verdict
 from src.judges.prompts import FIXED_PROMPT_VARIANT, PROMPT_PROTOCOL_VERSION, format_prompt
 from src.logging_utils import configure_logging
-from src.schemas import ExperimentConfig, JudgeConfig, JudgeResult
+from src.schemas import ExperimentConfig, JudgeConfig, JudgeResult, PromptOrder
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,6 @@ def judge_metadata_fields(judge: JudgeConfig) -> dict[str, object]:
         "model": judge.model,
         "max_tokens": judge.max_tokens,
         "trust_remote_code": judge.trust_remote_code,
-        "reverse_order": judge.reverse_order,
         "prompt_variant": FIXED_PROMPT_VARIANT,
         "prompt_protocol_version": PROMPT_PROTOCOL_VERSION,
     }
@@ -72,17 +71,21 @@ def validate_log_metadata(log_path: Path, judge: JudgeConfig) -> None:
                     f"Judge '{judge.id}' log is unsupported because it predates split-qualified item keys. "
                     f"Delete {log_path} and re-run with the current prompt protocol."
                 )
+            if "item_content_hash" not in record:
+                raise ValueError(
+                    f"Judge '{judge.id}' log is unsupported because it predates item content hashes. "
+                    f"Delete {log_path} and re-run with the current item content."
+                )
             if "repeat_index" not in record:
                 raise ValueError(
                     f"Judge '{judge.id}' log is unsupported because it predates explicit repeat indices. "
-                    f"Delete {log_path} and re-run with the current prompt protocol."
+                    f"Delete {log_path} and re-run with the current pipeline."
                 )
             try:
-                parsed_record = JudgeResult.model_validate(record)
-            except ValidationError as exc:
-                raise ValueError(
-                    f"Judge '{judge.id}' log is malformed at line {line_number}: {exc.errors()[0]['msg']}."
-                ) from exc
+                parsed_record = JudgeResult.from_persisted_record(record)
+            except (ValidationError, ValueError) as exc:
+                message = exc.errors()[0]["msg"] if isinstance(exc, ValidationError) else str(exc)
+                raise ValueError(f"Judge '{judge.id}' log is malformed at line {line_number}: {message}.") from exc
             if parsed_record.judge_id != judge.id:
                 raise ValueError(
                     f"Judge '{judge.id}' log is malformed at line {line_number}; expected judge_id "
@@ -120,12 +123,16 @@ def load_processed_keys(log_path: Path) -> set[tuple[str, str, str, int]]:
                     f"Judge log {log_path} is unsupported because it predates split-qualified item keys. "
                     "Delete it and re-run with the current prompt protocol."
                 )
-            try:
-                parsed_record = JudgeResult.model_validate(record)
-            except ValidationError as exc:
+            if "item_content_hash" not in record:
                 raise ValueError(
-                    f"Judge log {log_path} is malformed at line {line_number}: {exc.errors()[0]['msg']}."
-                ) from exc
+                    f"Judge log {log_path} is unsupported because it predates item content hashes. "
+                    "Delete it and re-run with the current item content."
+                )
+            try:
+                parsed_record = JudgeResult.from_persisted_record(record)
+            except (ValidationError, ValueError) as exc:
+                message = exc.errors()[0]["msg"] if isinstance(exc, ValidationError) else str(exc)
+                raise ValueError(f"Judge log {log_path} is malformed at line {line_number}: {message}.") from exc
             processed.add(
                 (
                     parsed_record.item_key,
@@ -148,7 +155,7 @@ def select_judges(config: ExperimentConfig, judge_id: str | None) -> list[JudgeC
     return filtered
 
 
-def prompt_payload(item: dict[str, Any], prompt_order: str) -> tuple[str, str, str]:
+def prompt_payload(item: dict[str, Any], prompt_order: PromptOrder) -> tuple[str, str, str]:
     """Return question and ordered responses for a prompt invocation."""
 
     if prompt_order == "reversed":
@@ -159,7 +166,7 @@ def prompt_payload(item: dict[str, Any], prompt_order: str) -> tuple[str, str, s
 def judge_item(
     judge: JudgeConfig,
     item: dict[str, Any],
-    prompt_order: str,
+    prompt_order: PromptOrder,
     repeat_index: int = 0,
 ) -> JudgeResult:
     """Run one MLX judge on one item and normalize the verdict back to original order."""
@@ -196,12 +203,11 @@ def judge_item(
         ground_truth_label=item["label"],
         prompt_variant=FIXED_PROMPT_VARIANT,
         prompt_protocol_version=PROMPT_PROTOCOL_VERSION,
-        prompt_order=cast(Literal["original", "reversed"], prompt_order),
+        prompt_order=prompt_order,
         repeat_index=repeat_index,
         model=judge.model,
         max_tokens=judge.max_tokens,
         trust_remote_code=judge.trust_remote_code,
-        reverse_order=judge.reverse_order,
         raw_response=raw_response,
         parsed_verdict=parsed_verdict_literal,
         correct=correct,
@@ -226,10 +232,9 @@ def run_judge(
     log_path = build_log_path(config.data.logs_dir, judge.id)
     validate_log_metadata(log_path, judge)
     processed = load_processed_keys(log_path)
-    prompt_orders = ("original", "reversed") if judge.reverse_order else ("original",)
-    tasks: list[tuple[dict[str, Any], str, int]] = []
+    tasks: list[tuple[dict[str, Any], PromptOrder, int]] = []
     for item in items:
-        for prompt_order in prompt_orders:
+        for prompt_order in judge.prompt_orders:
             for repeat_index in range(judge.num_repeats):
                 key = (item["item_key"], item["item_content_hash"], prompt_order, repeat_index)
                 if key not in processed:

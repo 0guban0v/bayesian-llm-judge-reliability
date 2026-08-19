@@ -37,7 +37,6 @@ def judge_result_payload() -> dict[str, object]:
         "model": "model-1",
         "max_tokens": 8,
         "trust_remote_code": False,
-        "reverse_order": False,
         "raw_response": "FINAL VERDICT: A",
         "parsed_verdict": "A",
         "correct": True,
@@ -114,7 +113,7 @@ class DataConfigTests(unittest.TestCase):
 
 
 class JudgeConfigTests(unittest.TestCase):
-    """Verify repeated-inference scheduling configuration."""
+    """Verify repeated-inference and prompt-order scheduling configuration."""
 
     def test_num_repeats_defaults_to_one(self) -> None:
         config = JudgeConfig(id="judge-a", model="model-a")
@@ -124,6 +123,34 @@ class JudgeConfigTests(unittest.TestCase):
     def test_num_repeats_requires_positive_count(self) -> None:
         with self.assertRaisesRegex(ValueError, "(?s)num_repeats.*greater than or equal to 1"):
             JudgeConfig(id="judge-a", model="model-a", num_repeats=0)
+
+    def test_prompt_orders_default_to_original(self) -> None:
+        config = JudgeConfig(id="judge-a", model="model-a")
+
+        self.assertEqual(config.prompt_orders, ["original"])
+
+    def test_prompt_orders_require_at_least_one_order(self) -> None:
+        with self.assertRaisesRegex(ValueError, "At least one prompt order must be configured"):
+            JudgeConfig(id="judge-a", model="model-a", prompt_orders=[])
+
+    def test_prompt_orders_reject_duplicates(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Prompt orders must be unique"):
+            JudgeConfig(id="judge-a", model="model-a", prompt_orders=["original", "original"])
+
+    def test_prompt_orders_require_original_for_wide_matrix_compatibility(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "must include original while inference uses the wide correctness matrix",
+        ):
+            JudgeConfig(id="judge-a", model="model-a", prompt_orders=["reversed"])
+
+    def test_prompt_orders_reject_unknown_order(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Input should be 'original' or 'reversed'"):
+            JudgeConfig(id="judge-a", model="model-a", prompt_orders=["randomized"])
+
+    def test_rejects_legacy_reverse_order_switch(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Extra inputs are not permitted|reverse_order"):
+            JudgeConfig(id="judge-a", model="model-a", reverse_order=True)
 
 
 class ExperimentConfigTests(unittest.TestCase):
@@ -139,6 +166,7 @@ class ExperimentConfigTests(unittest.TestCase):
         self.assertEqual(config.figures_dir, Path.cwd() / "figures")
         self.assertEqual(config.report_dir, Path.cwd() / "report")
         self.assertEqual(config.data.repeat_policy, "reject")
+        self.assertTrue(all(judge.prompt_orders == ["original", "reversed"] for judge in config.judges))
 
     def test_from_yaml_loads_analysis_defaults(self) -> None:
         config = ExperimentConfig.from_yaml("configs/experiment.yaml")
@@ -222,6 +250,9 @@ class ExperimentConfigTests(unittest.TestCase):
         )
         self.assertTrue(all(config.model.type == "2PL" for config in configs))
         self.assertTrue(all(config.inference.save_log_likelihood for config in configs))
+        self.assertTrue(
+            all(judge.prompt_orders == ["original", "reversed"] for config in configs for judge in config.judges)
+        )
         self.assertTrue(all(config.tracking.tracking_db == Path.cwd() / "mlflow.db" for config in configs))
         self.assertTrue(all(config.tracking.artifact_dir == Path.cwd() / "mlruns" for config in configs))
 

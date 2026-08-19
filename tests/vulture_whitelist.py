@@ -7,7 +7,7 @@ from src.analysis.plot_config import source_color_map
 from src.judges.parsers import JudgeOutput
 from src.judges.runner import judge_metadata_fields
 from src.models.irt_common import sample_prior_values
-from src.schemas import ExperimentConfig, InferenceConfig, JudgeResult
+from src.schemas import ExperimentConfig, InferenceConfig, JudgeConfig, JudgeResult
 
 _ = (
     analysis_figure_paths,
@@ -16,6 +16,7 @@ _ = (
     JudgeOutput.extract_verdict,
     InferenceConfig.sampler,
     ExperimentConfig.ensure_unique_judge_ids,
+    JudgeConfig.ensure_distinct_prompt_orders,
     JudgeResult.ground_truth_label,
     JudgeResult.item_content_hash,
     JudgeResult.item_key,
