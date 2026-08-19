@@ -26,18 +26,20 @@ flowchart LR
     IP --> J
     J --> LJ[(Judge logs with embedded metadata)]
 
-    C --> M[Build matrix from logs]
-    IP --> M
-    LJ --> M
-    M --> MP[(Judge matrix)]
+    C --> A[Build analysis artifacts from logs]
+    IP --> A
+    LJ --> A
+    A --> AP[(Order-level analysis table)]
+    A --> MP[(Wide compatibility matrix)]
 
-    C --> V[Validate items and matrix]
+    C --> V[Validate items and analysis artifacts]
+    AP --> V
     MP --> V
     V -->|complete| N[Fit Bayesian IRT]
     V -->|incomplete| X[Stop]
 
     C --> N
-    MP --> N
+    AP --> N
     N --> P[(Posterior archive)]
     N --> ML[(MLflow run)]
 
@@ -75,7 +77,7 @@ flowchart TB
     B --> O
     A --> O
 
-    O --> M[Observed matrix]
+    O --> M[Order-level observations]
     M --> P[Posterior]
     P --> Q[Judge rankings]
     P --> G[Diagnostics and figures]
@@ -87,10 +89,10 @@ flowchart TB
 ```
 
 - `configs/experiment.yaml`: single source of truth for data, judges, and inference
-- `src/data/`: item preparation, matrix construction, validation
+- `src/data/`: item preparation, long-form analysis construction, compatibility-matrix construction, validation
   Why: generated artifacts are derived from a reproducible sampled item set rather than ad hoc runs.
-- `src/data/matrix_semantics.py`: shared source of truth for metadata columns, original-order log semantics, and judge-level matrix summaries
-  Why: validation, plotting, and report exports now consume one matrix contract instead of reimplementing it.
+- `src/data/matrix_semantics.py`: shared source of truth for the versioned order-level choice contract, repeat resolution, compatibility-matrix metadata, and judge-level summaries
+  Why: inference consumes raw order-level choices while existing plotting and report code can continue using a matrix derived from the same resolved log snapshot.
 - `src/judges/`: prompts, parsing, MLX backend, runner
   Why: judge behavior is defined by the whole harness, not just the model ID.
 - `src/models/`: shared IRT helpers and PyMC inference
@@ -106,6 +108,10 @@ flowchart TB
   What: append-only judge outputs with item metadata and parsed verdicts.
   Why: matrix, validation, and posterior artifacts can be rebuilt from logs without trusting in-memory run state.
   Current contract: each JSONL record embeds prompt protocol and judge metadata, references sampled items via split-qualified `item_key` plus `item_content_hash`, and identifies its configured `prompt_order` plus `repeat_index`. Logs that predate the current closed-world schema are unsupported.
+
+- `data/processed/judge_analysis.parquet` is the canonical derived analysis table.
+  What: a versioned long-form row for each resolved item, judge, and prompt order, including displayed choice, normalized choice, gold choice, correctness, and validity.
+  Why: reversed judgments and raw choice position remain available to downstream order-aware analysis instead of being discarded during matrix construction. `judge_matrix.parquet` is an original-order compatibility export derived from this table.
 
 - `src/judges/mlx_backend.py` implements constrained verdict-only decoding.
   What: assistant-side prefill plus a logits processor that allows only a verdict token and EOS.

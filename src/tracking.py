@@ -227,13 +227,16 @@ def log_config(config: ExperimentConfig) -> None:
 
 
 def log_data_artifacts(config: ExperimentConfig) -> None:
-    """Log item and matrix artifact hashes."""
+    """Log item, analysis-table, and compatibility-matrix artifact hashes."""
 
     mlflow = _mlflow()
     artifact_meta: dict[str, str] = {}
     if config.data.item_path.exists():
         artifact_meta["item_path"] = str(config.data.item_path)
         artifact_meta["item_sha256"] = file_sha256(config.data.item_path)
+    if config.data.analysis_path.exists():
+        artifact_meta["analysis_path"] = str(config.data.analysis_path)
+        artifact_meta["analysis_sha256"] = file_sha256(config.data.analysis_path)
     if config.data.matrix_path.exists():
         artifact_meta["matrix_path"] = str(config.data.matrix_path)
         artifact_meta["matrix_sha256"] = file_sha256(config.data.matrix_path)

@@ -8,7 +8,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import polars as pl
 from src.analysis.posterior_archive import load_posterior
 from src.models.infer import run_and_save_posterior
 from src.models.irt_common import save_posterior
@@ -158,30 +157,30 @@ class PyMCModelTests(unittest.TestCase):
             progressbar=False,
         )
 
-    def test_run_and_save_posterior_rejects_incomplete_judge_coverage(self) -> None:
+    def test_run_and_save_posterior_rejects_incomplete_valid_original_choice_coverage(self) -> None:
         config = self._make_config()
         config.judges = [
             config.judges[0].model_copy(update={"id": "judge-a"}),
             config.judges[1].model_copy(update={"id": "judge-b"}),
         ]
-        matrix = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1", "gpt:item-2"],
-                "item_id": ["item-1", "item-2"],
-                "label": ["A>B", "B>A"],
-                "original_id": [1, 2],
-                "question": ["q1", "q2"],
-                "source": ["source-a", "source-b"],
-                "split": ["gpt", "gpt"],
-                "judge-a": [1, 0],
-                "judge-b": [1, None],
-            }
-        )
+        analysis = MagicMock(name="analysis")
+        items = MagicMock(name="items")
+        logs = MagicMock(name="logs")
 
-        with patch("src.models.infer.run_mcmc") as run_mcmc_mock:
-            with self.assertRaisesRegex(ValueError, "complete judge coverage|Incomplete judges"):
-                run_and_save_posterior(config, matrix)
+        with (
+            patch("src.models.infer.validate_items"),
+            patch("src.models.infer.assert_complete_prompt_order_coverage"),
+            patch("src.models.infer.assert_analysis_matches_current_items"),
+            patch(
+                "src.models.infer.assert_complete_original_choice_coverage",
+                side_effect=ValueError("Inference requires complete valid original-order choice coverage"),
+            ) as coverage_guard,
+            patch("src.models.infer.run_mcmc") as run_mcmc_mock,
+        ):
+            with self.assertRaisesRegex(ValueError, "complete valid original-order choice coverage"):
+                run_and_save_posterior(config, analysis, items, logs)
 
+        coverage_guard.assert_called_once_with(analysis, config.judges)
         run_mcmc_mock.assert_not_called()
 
     def test_run_and_save_posterior_rejects_incomplete_prompt_order_coverage(self) -> None:
@@ -190,19 +189,7 @@ class PyMCModelTests(unittest.TestCase):
             config.judges[0].model_copy(update={"id": "judge-a"}),
             config.judges[1].model_copy(update={"id": "judge-b"}),
         ]
-        matrix = pl.DataFrame(
-            {
-                "item_key": ["gpt:item-1"],
-                "item_id": ["item-1"],
-                "label": ["A>B"],
-                "original_id": [1],
-                "question": ["q1"],
-                "source": ["source-a"],
-                "split": ["gpt"],
-                "judge-a": [1],
-                "judge-b": [0],
-            }
-        )
+        analysis = MagicMock(name="analysis")
         items = MagicMock(name="items")
         logs = MagicMock(name="logs")
 
@@ -215,7 +202,7 @@ class PyMCModelTests(unittest.TestCase):
             patch("src.models.infer.run_mcmc") as run_mcmc_mock,
         ):
             with self.assertRaisesRegex(ValueError, "complete prompt-order coverage"):
-                run_and_save_posterior(config, matrix, items, logs)
+                run_and_save_posterior(config, analysis, items, logs)
 
         validate_items.assert_called_once_with(items)
         coverage_guard.assert_called_once_with(items, logs, config.judges)

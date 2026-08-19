@@ -42,6 +42,7 @@ class DataConfig(StrictConfigModel):
     raw_dir: Path = Path("data/raw")
     logs_dir: Path = Path("data/logs")
     item_file: str = "judgebench_items.parquet"
+    analysis_file: str = "judge_analysis.parquet"
     matrix_file: str = "judge_matrix.parquet"
     repeat_policy: RepeatPolicy = "reject"
 
@@ -56,6 +57,12 @@ class DataConfig(StrictConfigModel):
         """Return the judge matrix parquet path."""
 
         return self.output_dir / self.matrix_file
+
+    @property
+    def analysis_path(self) -> Path:
+        """Return the canonical order-level analysis parquet path."""
+
+        return self.output_dir / self.analysis_file
 
 
 class JudgeConfig(StrictConfigModel):
@@ -78,7 +85,9 @@ class JudgeConfig(StrictConfigModel):
         if len(self.prompt_orders) != len(set(self.prompt_orders)):
             raise ValueError("Prompt orders must be unique.")
         if "original" not in self.prompt_orders:
-            raise ValueError("Prompt orders must include original while inference uses the wide correctness matrix.")
+            raise ValueError(
+                "Prompt orders must include original while the current IRT model uses original-order judgments."
+            )
         return self
 
 

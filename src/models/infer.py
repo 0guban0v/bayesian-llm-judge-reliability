@@ -9,10 +9,20 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from src.data.loader import load_judge_logs
-from src.data.validate import assert_complete_judge_coverage, assert_complete_prompt_order_coverage, validate_items
+from src.data.loader import build_analysis_table, load_judge_logs
+from src.data.validate import (
+    assert_analysis_matches_current_items,
+    assert_complete_original_choice_coverage,
+    assert_complete_prompt_order_coverage,
+    validate_items,
+)
 from src.logging_utils import configure_logging, format_table_for_log
-from src.models.irt_common import load_matrix_observations, save_posterior, summarize_item_parameters, summarize_judges
+from src.models.irt_common import (
+    load_analysis_observations,
+    save_posterior,
+    summarize_item_parameters,
+    summarize_judges,
+)
 from src.models.irt_pymc import run_mcmc
 from src.schemas import ExperimentConfig
 
@@ -29,20 +39,39 @@ def parse_args() -> argparse.Namespace:
 
 def run_and_save_posterior(
     config: ExperimentConfig,
-    matrix: pl.DataFrame | None = None,
+    analysis: pl.DataFrame | None = None,
     items: pl.DataFrame | None = None,
     logs: pl.DataFrame | None = None,
 ) -> None:
     """Run inference and persist posterior samples."""
 
     config.ensure_directories()
-    prepared_matrix = matrix if matrix is not None else pl.read_parquet(config.data.matrix_path)
-    assert_complete_judge_coverage(prepared_matrix, [judge.id for judge in config.judges])
     prepared_items = items if items is not None else pl.read_parquet(config.data.item_path)
     validate_items(prepared_items)
     prepared_logs = logs if logs is not None else load_judge_logs(config.data.logs_dir)
     assert_complete_prompt_order_coverage(prepared_items, prepared_logs, config.judges)
-    observations = load_matrix_observations(prepared_matrix)
+    loaded_analysis_artifact = analysis is None
+    prepared_analysis = pl.read_parquet(config.data.analysis_path) if loaded_analysis_artifact else analysis
+    assert prepared_analysis is not None
+    assert_analysis_matches_current_items(prepared_items, prepared_analysis, config.judges)
+    if loaded_analysis_artifact:
+        expected_analysis = build_analysis_table(
+            prepared_items,
+            prepared_logs,
+            repeat_policy=config.data.repeat_policy,
+        )
+        task_order = ["item_key", "judge_id", "prompt_order"]
+        if not prepared_analysis.sort(task_order).equals(expected_analysis.sort(task_order)):
+            raise ValueError(
+                "Analysis table does not match current resolved judge logs. "
+                "Rebuild the analysis artifacts before running inference."
+            )
+    assert_complete_original_choice_coverage(prepared_analysis, config.judges)
+    observations = load_analysis_observations(
+        prepared_analysis,
+        judge_ids=[judge.id for judge in config.judges],
+        item_ids=prepared_items.get_column("item_key").to_list(),
+    )
     idata, samples, ppc_summary = run_mcmc(config, observations)
     output_path = config.inference.posterior_path
     inferencedata_path = config.inference.inferencedata_path

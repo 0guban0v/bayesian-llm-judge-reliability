@@ -14,9 +14,14 @@ from pydantic import ValidationError
 
 from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash, validate_item_content_hash
 from src.data.matrix_semantics import (
+    ANALYSIS_COLUMNS,
+    ANALYSIS_SCHEMA_VERSION,
     ITEM_METADATA_COLUMNS,
+    empty_analysis_table,
     pivot_original_judgments,
+    resolve_judgments,
     resolve_original_judgments,
+    validate_analysis_table,
 )
 from src.logging_utils import configure_logging
 from src.schemas import ExperimentConfig, JudgeResult, RepeatPolicy
@@ -325,22 +330,146 @@ def build_binary_matrix(
     return matrix.select(ordered_columns)
 
 
+def build_analysis_table(
+    items: pl.DataFrame,
+    logs: pl.DataFrame,
+    repeat_policy: RepeatPolicy = "reject",
+) -> pl.DataFrame:
+    """Build the canonical order-level judgment table from current logs."""
+
+    current_logs = select_current_item_logs(items, logs)
+    if current_logs.height == 0:
+        return empty_analysis_table()
+
+    required_log_columns = {
+        "item_key",
+        "item_content_hash",
+        "judge_id",
+        "prompt_order",
+        "repeat_index",
+        "parsed_verdict",
+        "correct",
+    }
+    missing_log_columns = sorted(required_log_columns - set(current_logs.columns))
+    if missing_log_columns:
+        raise ValueError(f"Judge logs are missing analysis columns: {', '.join(missing_log_columns)}")
+
+    required_item_columns = {"item_key", "item_content_hash", "item_id", "source", "split", "label"}
+    missing_item_columns = sorted(required_item_columns - set(items.columns))
+    if missing_item_columns:
+        raise ValueError(f"JudgeBench items are missing analysis columns: {', '.join(missing_item_columns)}")
+
+    resolved = resolve_judgments(
+        current_logs,
+        repeat_policy=repeat_policy,
+        duplicate_logger=logger,
+    )
+    joined = resolved.select(
+        [
+            "log_order",
+            "item_key",
+            "item_content_hash",
+            "judge_id",
+            "prompt_order",
+            "repeat_index",
+            "parsed_verdict",
+            pl.col("correct").alias("logged_correct"),
+        ]
+    ).join(
+        items.select(["item_key", "item_content_hash", "item_id", "source", "split", "label"]),
+        on=["item_key", "item_content_hash"],
+        how="inner",
+        validate="m:1",
+    )
+    analysis = (
+        joined.with_columns(
+            [
+                pl.lit(ANALYSIS_SCHEMA_VERSION, dtype=pl.UInt16).alias("analysis_schema_version"),
+                pl.col("parsed_verdict").cast(pl.String).alias("normalized_choice"),
+                pl.when(pl.col("label").eq("A>B")).then(pl.lit("A")).otherwise(pl.lit("B")).alias("gold_choice"),
+            ]
+        )
+        .with_columns(
+            [
+                pl.when(pl.col("prompt_order").eq("reversed"))
+                .then(pl.col("normalized_choice").replace_strict({"A": "B", "B": "A"}, default=None))
+                .otherwise(pl.col("normalized_choice"))
+                .alias("displayed_choice"),
+                pl.col("normalized_choice").eq(pl.col("gold_choice")).alias("correct"),
+                pl.col("normalized_choice").is_not_null().alias("valid"),
+            ]
+        )
+        .sort("log_order")
+    )
+    inconsistent_logged_correct = analysis.filter(~pl.col("logged_correct").eq_missing(pl.col("correct")))
+    if inconsistent_logged_correct.height:
+        row = inconsistent_logged_correct.row(0, named=True)
+        raise ValueError(
+            "Judge log correctness is inconsistent with its normalized choice for "
+            f"item_key={row['item_key']} judge_id={row['judge_id']} prompt_order={row['prompt_order']}."
+        )
+
+    analysis = analysis.select(ANALYSIS_COLUMNS)
+    validate_analysis_table(analysis)
+    return analysis
+
+
+def build_binary_matrix_from_analysis(
+    items: pl.DataFrame,
+    analysis: pl.DataFrame,
+    judge_ids: list[str],
+) -> pl.DataFrame:
+    """Build the original-order wide compatibility export from the analysis table."""
+
+    if analysis.height == 0:
+        matrix = items.select(sorted(ITEM_METADATA_COLUMNS))
+    else:
+        resolved_original = (
+            analysis.filter(pl.col("prompt_order").eq("original") & pl.col("correct").is_not_null())
+            .with_columns(pl.col("correct").cast(pl.Int8).alias("correct_int"))
+            .select(["item_key", "judge_id", "correct_int"])
+        )
+        pivoted = pivot_original_judgments(resolved_original)
+        matrix = items.select(sorted(ITEM_METADATA_COLUMNS)).join(pivoted, on="item_key", how="left")
+
+    for judge_id in judge_ids:
+        if judge_id not in matrix.columns:
+            matrix = matrix.with_columns(pl.lit(None, dtype=pl.Int8).alias(judge_id))
+    return matrix.select(sorted(ITEM_METADATA_COLUMNS) + judge_ids)
+
+
+def build_and_write_analysis_artifacts(
+    config: ExperimentConfig,
+    items: pl.DataFrame | None = None,
+    logs: pl.DataFrame | None = None,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Build and persist the canonical analysis table and wide compatibility export."""
+
+    prepared_items = items if items is not None else load_or_prepare_items(config)
+    prepared_logs = logs if logs is not None else load_judge_logs(config.data.logs_dir)
+    analysis = build_analysis_table(
+        prepared_items,
+        prepared_logs,
+        repeat_policy=config.data.repeat_policy,
+    )
+    matrix = build_binary_matrix_from_analysis(
+        prepared_items,
+        analysis,
+        [judge.id for judge in config.judges],
+    )
+    write_frame(analysis, config.data.analysis_path)
+    write_frame(matrix, config.data.matrix_path)
+    return analysis, matrix
+
+
 def build_and_write_matrix(
     config: ExperimentConfig,
     items: pl.DataFrame | None = None,
     logs: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
-    """Build and persist the judge matrix parquet."""
+    """Build both analysis artifacts and return the wide compatibility export."""
 
-    prepared_items = items if items is not None else load_or_prepare_items(config)
-    prepared_logs = logs if logs is not None else load_judge_logs(config.data.logs_dir)
-    matrix = build_binary_matrix(
-        prepared_items,
-        prepared_logs,
-        [judge.id for judge in config.judges],
-        repeat_policy=config.data.repeat_policy,
-    )
-    write_frame(matrix, config.data.matrix_path)
+    _, matrix = build_and_write_analysis_artifacts(config, items, logs)
     return matrix
 
 
@@ -353,7 +482,8 @@ def main() -> None:
     items = load_or_prepare_items(config, refresh=args.refresh_items)
     logger.info("wrote item subset to %s (%s rows)", config.data.item_path, items.height)
     if args.rebuild_matrix or any(config.data.logs_dir.glob("*.jsonl")):
-        matrix = build_and_write_matrix(config, items)
+        analysis, matrix = build_and_write_analysis_artifacts(config, items)
+        logger.info("wrote analysis table to %s (%s rows)", config.data.analysis_path, analysis.height)
         logger.info("wrote judge matrix to %s (%s rows)", config.data.matrix_path, matrix.height)
 
 

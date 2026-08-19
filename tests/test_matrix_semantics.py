@@ -6,11 +6,13 @@ import unittest
 
 import polars as pl
 from src.data.matrix_semantics import (
+    ANALYSIS_SCHEMA_VERSION,
     judge_columns,
     observed_accuracy_frame,
     pivot_original_judgments,
     resolve_original_judgments,
     summarize_matrix,
+    validate_analysis_table,
 )
 
 
@@ -153,6 +155,29 @@ class MatrixSemanticsTests(unittest.TestCase):
 
         self.assertEqual(observed.get_column("judge_id").to_list(), ["judge-b", "judge-a"])
         self.assertEqual(observed.get_column("accuracy").to_list(), [0.5, 0.5])
+
+    def test_analysis_table_rejects_unsupported_schema_version(self) -> None:
+        analysis = pl.DataFrame(
+            {
+                "analysis_schema_version": pl.Series([ANALYSIS_SCHEMA_VERSION + 1], dtype=pl.UInt16),
+                "item_key": ["gpt:item-1"],
+                "item_content_hash": ["0" * 64],
+                "item_id": ["item-1"],
+                "source": ["source-a"],
+                "split": ["gpt"],
+                "judge_id": ["judge-a"],
+                "prompt_order": ["original"],
+                "repeat_index": [0],
+                "displayed_choice": ["A"],
+                "normalized_choice": ["A"],
+                "gold_choice": ["A"],
+                "correct": [True],
+                "valid": [True],
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unsupported analysis schema version.*Rebuild"):
+            validate_analysis_table(analysis)
 
 
 if __name__ == "__main__":
