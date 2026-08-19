@@ -15,6 +15,7 @@ data:
   logs_dir: data/logs
   item_file: judgebench_items.parquet
   matrix_file: judge_matrix.parquet
+  repeat_policy: reject
 
 judges:
   - id: deepseek-r1-distill-qwen-14b

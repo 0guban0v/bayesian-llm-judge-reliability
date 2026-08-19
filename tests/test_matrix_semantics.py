@@ -6,10 +6,10 @@ import unittest
 
 import polars as pl
 from src.data.matrix_semantics import (
-    first_original_judgments,
     judge_columns,
     observed_accuracy_frame,
     pivot_original_judgments,
+    resolve_original_judgments,
     summarize_matrix,
 )
 
@@ -17,20 +17,86 @@ from src.data.matrix_semantics import (
 class MatrixSemanticsTests(unittest.TestCase):
     """Verify shared log and matrix helper behavior."""
 
-    def test_first_original_judgments_keep_first_duplicate_in_log_order(self) -> None:
-        logs = pl.DataFrame(
+    def duplicate_logs(self) -> pl.DataFrame:
+        """Return conflicting repeats plus unrelated reversed judgment."""
+
+        return pl.DataFrame(
             {
                 "item_key": ["gpt:item-1", "gpt:item-1", "gpt:item-1"],
                 "item_id": ["item-1", "item-1", "item-1"],
                 "judge_id": ["judge-a", "judge-a", "judge-b"],
                 "prompt_order": ["original", "original", "reversed"],
+                "repeat_index": [0, 1, 0],
                 "correct": [True, False, True],
             }
         )
 
-        first = first_original_judgments(logs)
+    def test_empty_resolution_matches_populated_output_schema(self) -> None:
+        empty = resolve_original_judgments(pl.DataFrame())
+        populated = resolve_original_judgments(self.duplicate_logs().head(1))
 
-        self.assertEqual(first.sort(["item_key", "judge_id"])["correct_int"].to_list(), [1])
+        self.assertEqual(empty.schema, populated.schema)
+        self.assertEqual(
+            empty.columns,
+            ["log_order", "item_key", "judge_id", "correct_int"],
+        )
+
+    def test_reject_policy_fails_on_duplicate(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "Duplicate judgment: item_key=gpt:item-1 judge_id=judge-a prompt_order=original count=2",
+        ):
+            resolve_original_judgments(self.duplicate_logs())
+
+    def test_reject_policy_also_fails_on_reversed_duplicate(self) -> None:
+        logs = pl.DataFrame(
+            {
+                "item_key": ["gpt:item-1", "gpt:item-1"],
+                "item_id": ["item-1", "item-1"],
+                "judge_id": ["judge-a", "judge-a"],
+                "prompt_order": ["reversed", "reversed"],
+                "repeat_index": [0, 1],
+                "correct": [True, False],
+            }
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Duplicate judgment: item_key=gpt:item-1 judge_id=judge-a prompt_order=reversed count=2",
+        ):
+            resolve_original_judgments(logs)
+
+    def test_first_policy_keeps_first_duplicate_in_log_order(self) -> None:
+        resolved = resolve_original_judgments(self.duplicate_logs(), repeat_policy="first")
+
+        self.assertEqual(resolved.sort(["item_key", "judge_id"])["correct_int"].to_list(), [1])
+
+    def test_latest_policy_keeps_last_duplicate_in_log_order(self) -> None:
+        resolved = resolve_original_judgments(self.duplicate_logs(), repeat_policy="latest")
+
+        self.assertEqual(resolved.sort(["item_key", "judge_id"])["correct_int"].to_list(), [0])
+
+    def test_rejects_unsupported_repeat_policy_at_runtime(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported repeat policy: newest"):
+            resolve_original_judgments(self.duplicate_logs(), repeat_policy="newest")  # type: ignore[arg-type]
+
+    def test_policy_resolves_repeat_before_excluding_invalid_verdict(self) -> None:
+        logs = pl.DataFrame(
+            {
+                "item_key": ["gpt:item-1", "gpt:item-1"],
+                "item_id": ["item-1", "item-1"],
+                "judge_id": ["judge-a", "judge-a"],
+                "prompt_order": ["original", "original"],
+                "repeat_index": [0, 1],
+                "correct": [None, True],
+            }
+        )
+
+        first = resolve_original_judgments(logs, repeat_policy="first")
+        latest = resolve_original_judgments(logs, repeat_policy="latest")
+
+        self.assertEqual(first.height, 0)
+        self.assertEqual(latest["correct_int"].to_list(), [1])
 
     def test_pivot_original_judgments_returns_wide_matrix(self) -> None:
         first = pl.DataFrame(

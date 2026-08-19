@@ -14,6 +14,7 @@ from src.data.item_identity import ITEM_CONTENT_FIELDS, item_content_hash, valid
 from src.data.loader import (
     _dataset_to_frame,
     _matches_categories,
+    build_and_write_matrix,
     build_binary_matrix,
     load_judge_logs,
     load_or_prepare_items,
@@ -68,6 +69,7 @@ def build_log_record(item: dict[str, object], **overrides: object) -> dict[str, 
         "prompt_variant": FIXED_PROMPT_VARIANT,
         "prompt_protocol_version": PROMPT_PROTOCOL_VERSION,
         "prompt_order": "original",
+        "repeat_index": 0,
         "model": "model-a",
         "max_tokens": 8,
         "trust_remote_code": False,
@@ -159,7 +161,7 @@ class DatasetToFrameTests(unittest.TestCase):
 class BuildBinaryMatrixTests(unittest.TestCase):
     """Verify matrix construction edge cases."""
 
-    def test_warns_when_duplicate_judgments_exist(self) -> None:
+    def test_rejects_duplicate_judgments_by_default(self) -> None:
         item = build_item(source="source", question="question")
         items = pl.DataFrame([item])
         logs = pl.DataFrame(
@@ -169,15 +171,65 @@ class BuildBinaryMatrixTests(unittest.TestCase):
                 "item_id": ["item-1", "item-1"],
                 "judge_id": ["judge-a", "judge-a"],
                 "prompt_order": ["original", "original"],
+                "repeat_index": [0, 1],
                 "correct": [True, False],
             }
         )
 
-        with self.assertLogs("src.data.loader", level="WARNING") as captured:
-            matrix = build_binary_matrix(items, logs, ["judge-a"])
+        with self.assertRaisesRegex(
+            ValueError,
+            "Duplicate judgment: item_key=gpt:item-1 judge_id=judge-a prompt_order=original count=2",
+        ):
+            build_binary_matrix(items, logs, ["judge-a"])
 
-        self.assertIn("duplicate original-order judgments detected", captured.output[0])
-        self.assertEqual(matrix["judge-a"].to_list(), [1])
+    def test_first_and_latest_policies_select_by_log_order(self) -> None:
+        item = build_item(source="source", question="question")
+        items = pl.DataFrame([item])
+        logs = pl.DataFrame(
+            {
+                "item_key": ["gpt:item-1", "gpt:item-1"],
+                "item_content_hash": [item["item_content_hash"], item["item_content_hash"]],
+                "item_id": ["item-1", "item-1"],
+                "judge_id": ["judge-a", "judge-a"],
+                "prompt_order": ["original", "original"],
+                "repeat_index": [0, 1],
+                "correct": [True, False],
+            }
+        )
+
+        with self.assertLogs("src.data.loader", level="WARNING"):
+            first_matrix = build_binary_matrix(items, logs, ["judge-a"], repeat_policy="first")
+        with self.assertLogs("src.data.loader", level="WARNING"):
+            latest_matrix = build_binary_matrix(items, logs, ["judge-a"], repeat_policy="latest")
+
+        self.assertEqual(first_matrix["judge-a"].to_list(), [1])
+        self.assertEqual(latest_matrix["judge-a"].to_list(), [0])
+
+    def test_configured_repeat_policy_reaches_matrix_build(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml")).model_copy(deep=True)
+        config.data.repeat_policy = "latest"
+        item = build_item(source="source", question="question")
+        items = pl.DataFrame([item])
+        logs = pl.DataFrame(
+            {
+                "item_key": ["gpt:item-1", "gpt:item-1"],
+                "item_content_hash": [item["item_content_hash"], item["item_content_hash"]],
+                "item_id": ["item-1", "item-1"],
+                "judge_id": [config.judges[0].id, config.judges[0].id],
+                "prompt_order": ["original", "original"],
+                "repeat_index": [0, 1],
+                "correct": [True, False],
+            }
+        )
+
+        with (
+            patch("src.data.loader.load_judge_logs", return_value=logs),
+            patch("src.data.loader.write_frame"),
+            self.assertLogs("src.data.loader", level="WARNING"),
+        ):
+            matrix = build_and_write_matrix(config, items)
+
+        self.assertEqual(matrix[config.judges[0].id].to_list(), [0])
 
     def test_distinguishes_same_item_id_across_splits_via_item_key(self) -> None:
         gpt_item = build_item()
@@ -315,6 +367,38 @@ class LoadJudgeLogsTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "line 1: item_content_hash: String should match pattern"):
                 load_judge_logs(logs_dir)
+
+    def test_rejects_log_without_explicit_repeat_index(self) -> None:
+        item = build_item()
+        record = build_log_record(item)
+        del record["repeat_index"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            log_path = logs_dir / "judge-a.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "line 1.*predates explicit repeat indices"):
+                load_judge_logs(logs_dir)
+
+    def test_preserves_explicit_repeat_indices(self) -> None:
+        item = build_item()
+        records = [
+            build_log_record(item, repeat_index=0),
+            build_log_record(item, repeat_index=2),
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            log_path = logs_dir / "judge-a.jsonl"
+            log_path.write_text(
+                "".join(json.dumps(record) + "\n" for record in records),
+                encoding="utf-8",
+            )
+
+            logs = load_judge_logs(logs_dir)
+
+        self.assertEqual(logs["repeat_index"].to_list(), [0, 2])
 
 
 class CategoryMatcherTests(unittest.TestCase):

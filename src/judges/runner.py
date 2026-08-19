@@ -72,6 +72,11 @@ def validate_log_metadata(log_path: Path, judge: JudgeConfig) -> None:
                     f"Judge '{judge.id}' log is unsupported because it predates split-qualified item keys. "
                     f"Delete {log_path} and re-run with the current prompt protocol."
                 )
+            if "repeat_index" not in record:
+                raise ValueError(
+                    f"Judge '{judge.id}' log is unsupported because it predates explicit repeat indices. "
+                    f"Delete {log_path} and re-run with the current prompt protocol."
+                )
             try:
                 parsed_record = JudgeResult.model_validate(record)
             except ValidationError as exc:
@@ -99,12 +104,12 @@ def validate_log_metadata(log_path: Path, judge: JudgeConfig) -> None:
                 )
 
 
-def load_processed_keys(log_path: Path) -> set[tuple[str, str, str]]:
+def load_processed_keys(log_path: Path) -> set[tuple[str, str, str, int]]:
     """Return content-qualified keys for previously completed judge tasks."""
 
     if not log_path.exists():
         return set()
-    processed: set[tuple[str, str, str]] = set()
+    processed: set[tuple[str, str, str, int]] = set()
     with log_path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             if not line.strip():
@@ -126,6 +131,7 @@ def load_processed_keys(log_path: Path) -> set[tuple[str, str, str]]:
                     parsed_record.item_key,
                     parsed_record.item_content_hash,
                     parsed_record.prompt_order,
+                    parsed_record.repeat_index,
                 )
             )
     return processed
@@ -154,6 +160,7 @@ def judge_item(
     judge: JudgeConfig,
     item: dict[str, Any],
     prompt_order: str,
+    repeat_index: int = 0,
 ) -> JudgeResult:
     """Run one MLX judge on one item and normalize the verdict back to original order."""
 
@@ -190,6 +197,7 @@ def judge_item(
         prompt_variant=FIXED_PROMPT_VARIANT,
         prompt_protocol_version=PROMPT_PROTOCOL_VERSION,
         prompt_order=cast(Literal["original", "reversed"], prompt_order),
+        repeat_index=repeat_index,
         model=judge.model,
         max_tokens=judge.max_tokens,
         trust_remote_code=judge.trust_remote_code,
@@ -219,12 +227,13 @@ def run_judge(
     validate_log_metadata(log_path, judge)
     processed = load_processed_keys(log_path)
     prompt_orders = ("original", "reversed") if judge.reverse_order else ("original",)
-    tasks: list[tuple[dict[str, Any], str]] = []
+    tasks: list[tuple[dict[str, Any], str, int]] = []
     for item in items:
         for prompt_order in prompt_orders:
-            key = (item["item_key"], item["item_content_hash"], prompt_order)
-            if key not in processed:
-                tasks.append((item, prompt_order))
+            for repeat_index in range(judge.num_repeats):
+                key = (item["item_key"], item["item_content_hash"], prompt_order, repeat_index)
+                if key not in processed:
+                    tasks.append((item, prompt_order, repeat_index))
     logger.info(
         "judge=%s backend=%s model=%s prompt_variant=%s pending_tasks=%s log_path=%s",
         judge.id,
@@ -240,23 +249,25 @@ def run_judge(
 
     completed = 0
     with log_path.open("a", encoding="utf-8") as handle:
-        for item_index, (item, prompt_order) in enumerate(tasks, start=1):
+        for item_index, (item, prompt_order, repeat_index) in enumerate(tasks, start=1):
             logger.info(
-                "judge=%s start item=%s order=%s index=%s/%s",
+                "judge=%s start item=%s order=%s repeat=%s index=%s/%s",
                 judge.id,
                 item["item_id"],
                 prompt_order,
+                repeat_index,
                 item_index,
                 len(tasks),
             )
-            result = judge_item(judge, item, prompt_order)
+            result = judge_item(judge, item, prompt_order, repeat_index=repeat_index)
             write_result(handle, result)
             completed += 1
             logger.info(
-                "judge=%s done item=%s order=%s verdict=%s correct=%s latency_ms=%s",
+                "judge=%s done item=%s order=%s repeat=%s verdict=%s correct=%s latency_ms=%s",
                 judge.id,
                 result.item_id,
                 result.prompt_order,
+                result.repeat_index,
                 result.parsed_verdict,
                 result.correct,
                 result.latency_ms,

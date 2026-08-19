@@ -7,7 +7,15 @@ import unittest
 from pathlib import Path
 
 import yaml
-from src.schemas import AnalysisConfig, ExperimentConfig, InferenceConfig, JudgeResult, PriorConfig
+from src.schemas import (
+    AnalysisConfig,
+    DataConfig,
+    ExperimentConfig,
+    InferenceConfig,
+    JudgeConfig,
+    JudgeResult,
+    PriorConfig,
+)
 
 
 def judge_result_payload() -> dict[str, object]:
@@ -25,6 +33,7 @@ def judge_result_payload() -> dict[str, object]:
         "prompt_variant": "fixed_verdict_only",
         "prompt_protocol_version": "v1",
         "prompt_order": "original",
+        "repeat_index": 0,
         "model": "model-1",
         "max_tokens": 8,
         "trust_remote_code": False,
@@ -53,6 +62,20 @@ class JudgeResultSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "(?s)item_content_hash.*String should match pattern"):
             JudgeResult.model_validate(payload)
 
+    def test_requires_repeat_index(self) -> None:
+        payload = judge_result_payload()
+        del payload["repeat_index"]
+
+        with self.assertRaisesRegex(ValueError, "(?s)repeat_index.*Field required"):
+            JudgeResult.model_validate(payload)
+
+    def test_rejects_negative_repeat_index(self) -> None:
+        payload = judge_result_payload()
+        payload["repeat_index"] = -1
+
+        with self.assertRaisesRegex(ValueError, "(?s)repeat_index.*greater than or equal to 0"):
+            JudgeResult.model_validate(payload)
+
 
 class InferenceConfigTests(unittest.TestCase):
     """Verify inference path resolution."""
@@ -76,6 +99,36 @@ class InferenceConfigTests(unittest.TestCase):
             Path("data/processed/posteriors/irt_posterior.npz"),
         )
 
+
+class DataConfigTests(unittest.TestCase):
+    """Verify duplicate-judgment policy configuration."""
+
+    def test_repeat_policy_defaults_to_reject(self) -> None:
+        config = DataConfig(source="judgebench", subset_size=1)
+
+        self.assertEqual(config.repeat_policy, "reject")
+
+    def test_rejects_unknown_repeat_policy(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Input should be 'reject', 'first' or 'latest'"):
+            DataConfig(source="judgebench", subset_size=1, repeat_policy="newest")
+
+
+class JudgeConfigTests(unittest.TestCase):
+    """Verify repeated-inference scheduling configuration."""
+
+    def test_num_repeats_defaults_to_one(self) -> None:
+        config = JudgeConfig(id="judge-a", model="model-a")
+
+        self.assertEqual(config.num_repeats, 1)
+
+    def test_num_repeats_requires_positive_count(self) -> None:
+        with self.assertRaisesRegex(ValueError, "(?s)num_repeats.*greater than or equal to 1"):
+            JudgeConfig(id="judge-a", model="model-a", num_repeats=0)
+
+
+class ExperimentConfigTests(unittest.TestCase):
+    """Verify resolved experiment configuration."""
+
     def test_from_yaml_resolves_repo_relative_paths(self) -> None:
         config = ExperimentConfig.from_yaml("configs/experiment.yaml")
 
@@ -85,6 +138,7 @@ class InferenceConfigTests(unittest.TestCase):
         self.assertTrue(config.inference.output_dir.is_absolute())
         self.assertEqual(config.figures_dir, Path.cwd() / "figures")
         self.assertEqual(config.report_dir, Path.cwd() / "report")
+        self.assertEqual(config.data.repeat_policy, "reject")
 
     def test_from_yaml_loads_analysis_defaults(self) -> None:
         config = ExperimentConfig.from_yaml("configs/experiment.yaml")

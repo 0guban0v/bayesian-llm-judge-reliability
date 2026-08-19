@@ -125,6 +125,7 @@ class JudgeItemTests(unittest.TestCase):
         self.assertEqual(result.prompt_protocol_version, PROMPT_PROTOCOL_VERSION)
         self.assertEqual(result.model, judge.model)
         self.assertEqual(result.item_content_hash, item["item_content_hash"])
+        self.assertEqual(result.repeat_index, 0)
         self.assertTrue(result.correct)
 
     def test_judge_result_rejects_unknown_jsonl_fields(self) -> None:
@@ -145,6 +146,19 @@ class JudgeItemTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Extra inputs are not permitted|unexpected_field"):
             type(result).model_validate(payload)
+
+    def test_judge_item_preserves_requested_repeat_index(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        item = build_item()
+
+        with (
+            patch("src.judges.runner.generate_text", return_value="FINAL VERDICT: A"),
+            patch("src.judges.runner.time.perf_counter", side_effect=[0.0, 0.01]),
+        ):
+            result = judge_item(judge, item, "original", repeat_index=3)
+
+        self.assertEqual(result.repeat_index, 3)
 
 
 class LogMetadataTests(unittest.TestCase):
@@ -170,6 +184,7 @@ class LogMetadataTests(unittest.TestCase):
             "prompt_variant": FIXED_PROMPT_VARIANT,
             "prompt_protocol_version": PROMPT_PROTOCOL_VERSION,
             "prompt_order": prompt_order,
+            "repeat_index": 0,
             "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
             "max_tokens": 8,
             "trust_remote_code": False,
@@ -190,6 +205,7 @@ class LogMetadataTests(unittest.TestCase):
 
         self.assertEqual(metadata_fields["prompt_variant"], FIXED_PROMPT_VARIANT)
         self.assertEqual(metadata_fields["prompt_protocol_version"], PROMPT_PROTOCOL_VERSION)
+        self.assertNotIn("num_repeats", metadata_fields)
 
     def test_validate_log_metadata_rejects_legacy_log_without_embedded_metadata(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
@@ -248,6 +264,19 @@ class LogMetadataTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, r"log is malformed at line 1: Field required"):
                 validate_log_metadata(log_path, judge)
 
+    def test_validate_log_metadata_rejects_legacy_log_without_repeat_index(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0]
+        record = self.build_log_record(judge.id, **judge_metadata_fields(judge))
+        del record["repeat_index"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "predates explicit repeat indices"):
+                validate_log_metadata(log_path, judge)
+
     def test_validate_log_metadata_rejects_invalid_prompt_order_value(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
         judge = config.judges[0]
@@ -291,7 +320,7 @@ class LogMetadataTests(unittest.TestCase):
     def test_load_processed_keys_qualifies_item_by_content_hash(self) -> None:
         config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
         judge = config.judges[0]
-        record = self.build_log_record(judge.id, **judge_metadata_fields(judge))
+        record = self.build_log_record(judge.id, repeat_index=3, **judge_metadata_fields(judge))
 
         with tempfile.TemporaryDirectory() as temp_dir:
             log_path = Path(temp_dir) / f"{judge.id}.jsonl"
@@ -299,7 +328,7 @@ class LogMetadataTests(unittest.TestCase):
 
             self.assertEqual(
                 load_processed_keys(log_path),
-                {("gpt:item-1", "0" * 64, "original")},
+                {("gpt:item-1", "0" * 64, "original", 3)},
             )
 
     def test_run_judge_reprocesses_item_when_content_hash_changes(self) -> None:
@@ -330,6 +359,41 @@ class LogMetadataTests(unittest.TestCase):
         self.assertEqual(completed, 1)
         self.assertEqual(len(records), 2)
         self.assertEqual(records[-1]["item_content_hash"], changed_item["item_content_hash"])
+        self.assertEqual(records[-1]["repeat_index"], 0)
+
+    def test_run_judge_schedules_and_resumes_each_repeat_index(self) -> None:
+        config = ExperimentConfig.from_yaml(Path("configs/experiment.yaml"))
+        judge = config.judges[0].model_copy(update={"num_repeats": 3})
+        item = build_item()
+        existing_record = self.build_log_record(
+            judge.id,
+            item_content_hash=item["item_content_hash"],
+            repeat_index=0,
+            **judge_metadata_fields(judge),
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            logs_dir = Path(temp_dir)
+            config = config.model_copy(update={"data": config.data.model_copy(update={"logs_dir": logs_dir})})
+            log_path = logs_dir / f"{judge.id}.jsonl"
+            log_path.write_text(json.dumps(existing_record) + "\n", encoding="utf-8")
+
+            with (
+                patch(
+                    "src.judges.runner.generate_text",
+                    side_effect=["FINAL VERDICT: A", "FINAL VERDICT: B"],
+                ),
+                patch(
+                    "src.judges.runner.time.perf_counter",
+                    side_effect=[0.0, 0.01, 0.02, 0.03],
+                ),
+            ):
+                completed = run_judge(config, judge, [item])
+
+            records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(completed, 2)
+        self.assertEqual([record["repeat_index"] for record in records], [0, 1, 2])
 
 
 if __name__ == "__main__":
